@@ -9,6 +9,7 @@ class ArtifactType(str, enum.Enum):
     POWER_SESSION = "POWER_SESSION"
     TRUST_SEAL = "TRUST_SEAL"
     COMBINED_SESSION = "COMBINED_SESSION"
+    POWERVERIFY_UNIT = "POWERVERIFY_UNIT"  # Manufacturing birth certificate (PAT-002, PAT-019)
 
 
 class Artifact(Base):

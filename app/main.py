@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import init_db
-from app.routers import verify, attest
+from app.routers import verify, attest, units
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -16,7 +16,7 @@ app = FastAPI(
         "POST an attestation artifact from a ZKKey or PowerVerify device, get back a "
         "short code (PAT-010). Anyone can verify it at verifyknot.io with no login required."
     ),
-    version="0.1.0",
+    version="0.2.0",
     contact={"name": "ZKNOT, Inc.", "email": "ops@zknot.io"},
     docs_url="/docs",
     redoc_url="/redoc",
@@ -32,6 +32,7 @@ app.add_middleware(
 
 app.include_router(verify.router)
 app.include_router(attest.router)
+app.include_router(units.router)
 
 
 @app.on_event("startup")
@@ -45,9 +46,10 @@ def root():
     return {
         "service": "ZKNOT Platform API",
         "status": "operational",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "verify": "GET /v1/verify/{short_code}",
         "attest": "POST /v1/attest",
+        "provision": "POST /v1/units/provision",
         "docs": "/docs",
     }
 
