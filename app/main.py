@@ -16,7 +16,7 @@ app = FastAPI(
         "POST an attestation artifact from a ZKKey or PowerVerify device, get back a "
         "short code (PAT-010). Anyone can verify it at verifyknot.io with no login required."
     ),
-    version="0.2.0",
+    version="0.3.0",
     contact={"name": "ZKNOT, Inc.", "email": "ops@zknot.io"},
     docs_url="/docs",
     redoc_url="/redoc",
@@ -46,7 +46,7 @@ def root():
     return {
         "service": "ZKNOT Platform API",
         "status": "operational",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "verify": "GET /v1/verify/{short_code}",
         "attest": "POST /v1/attest",
         "provision": "POST /v1/units/provision",
