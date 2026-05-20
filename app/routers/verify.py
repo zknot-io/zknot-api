@@ -1,5 +1,24 @@
+"""
+ZKNOT Platform API — verification router.
+
+GET /v1/verify/{code}
+
+Public verification endpoint called by verifyknot.io and external SDKs.
+No authentication required (PAT-010 §4 — public verifiability is a core
+property of the human-readable attestation code).
+
+Accepts any of:
+- Client-authoritative short codes (PAT-010 §3, format XXXX-XXXX-XXXX)
+- Server-derived short codes (legacy format ZK-XXX-XXXX)
+- Raw artifact UUIDs (8-4-4-4-12 hex)
+
+Lookup strategy: try short_code first, fall back to UUID. This handles all
+three formats above without requiring the caller to know which they have.
+"""
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.database import get_db
 from app.schemas.verify import VerifyResponse, ChainVerifyResponse
 from app.services.attestation import lookup_by_short_code, lookup_by_artifact_id
@@ -37,15 +56,23 @@ def build_verify_response(artifact, chain_entry, db) -> VerifyResponse:
 @router.get("/verify/{code}", response_model=VerifyResponse)
 def verify_by_code(code: str, db: Session = Depends(get_db)):
     """
-    Resolve a short code (ZK-XXXX-XXX) or artifact UUID to a verified chain entry.
-    This is the endpoint the website widget calls. No auth required.
+    Resolve any of the following to a verified chain entry:
+    - Client-authoritative short code per PAT-010 §3 (XXXX-XXXX-XXXX)
+    - Server-derived short code (ZK-XXX-XXXX)
+    - Raw artifact UUID
+
+    Lookup order: short_code first, UUID fallback. This is robust to all
+    short_code formats and matches the public verifiability claim of PAT-010.
     """
     code = code.strip()
 
-    # Try short code first (ZK- prefix), then fall back to UUID
-    if code.upper().startswith("ZK-"):
-        result = lookup_by_short_code(db, code)
-    else:
+    # Try short_code lookup first — covers both PAT-010 client codes (12 char)
+    # and legacy server-derived codes (ZK-prefixed). lookup_by_short_code
+    # normalizes case internally.
+    result = lookup_by_short_code(db, code)
+
+    # If not found by short_code, try artifact_id (UUID).
+    if not result:
         result = lookup_by_artifact_id(db, code)
 
     if not result:
@@ -66,9 +93,10 @@ def verify_by_code(code: str, db: Session = Depends(get_db)):
 def verify_full_chain(db: Session = Depends(get_db)):
     """Walk and verify the entire chain. Returns first failure position if found."""
     ok, failure_pos = verify_chain_integrity(db)
+    from app.models.chain import ChainEntry
     return ChainVerifyResponse(
         chain_id="default",
-        total_entries=db.query(__import__('app.models.chain', fromlist=['ChainEntry']).ChainEntry).count(),
+        total_entries=db.query(ChainEntry).count(),
         verified=ok,
         first_failure_position=failure_pos,
         message="Chain integrity verified." if ok else f"Integrity failure at position {failure_pos}.",
