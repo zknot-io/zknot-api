@@ -70,3 +70,39 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 - Initial deploy with placeholder signature verification.
 - `/v1/attest`, `/v1/verify/{code}`, `/v1/chain/verify`, units endpoints.
+
+## Forensic record: Chain position 10 (pre-fix audit witness)
+
+Between the v0.2.0 deploy (which contained `verify_signature_placeholder`
+returning `True` for any non-empty input) and the v0.3.0 deploy (which
+implements real ECDSA P-256 verification), a deliberate test was conducted
+to confirm the placeholder was in fact accepting invalid signatures.
+
+On 2026-05-20T19:08Z, the following artifact was submitted to the live
+production endpoint:
+
+  - artifact_id: 00000000-0000-0000-0000-000000000001
+  - device_id:   FAKE-TEST
+  - signature:   (130 hex zeros, no possible match against any P-256 pubkey)
+  - public_key:  ZK-EW6E-EERX (a real key, but unrelated to the test signature)
+
+The v0.2.0 placeholder accepted this artifact and appended it to the chain
+at position 10. The entry_hash at that position is:
+  b39009c77b358ec61a22e8e7bd17723da29d002e7e722500bb5095d5c3807175
+
+This entry is retained intentionally as forensic evidence that:
+  1. The pre-v0.3.0 placeholder verifier accepted arbitrary input.
+  2. The v0.3.0 deploy (32f0b8b) rejected the identical input with HTTP 400
+     ("Signature verification failed: signature does not match public_key +
+     challenge_hash").
+  3. The chain boundary between position 10 (pre-fix) and position 11 (the
+     first legitimately verified post-fix entry, 501C-LPR0-FSAC) is the
+     authoritative timestamp for the security upgrade.
+
+No legitimate ZKNOT-issued unit has device_id "FAKE-TEST" or signature of
+all zeros. The entry is trivially identifiable in any audit. All legitimate
+post-fix entries chain forward from position 10.
+
+Per PAT-005 (Vendor-Irrevocable Attestation), this record cannot be
+modified or removed without invalidating every subsequent chain entry —
+which is precisely the property we are demonstrating.
