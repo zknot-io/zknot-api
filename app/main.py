@@ -58,15 +58,3 @@ def root():
 def health():
     return {"status": "ok"}
 
-# DEBUG_TRACEBACK_HANDLER — TEMPORARY, REMOVE AFTER DIAGNOSIS
-import traceback as _tb
-from fastapi import Request as _Request
-from fastapi.responses import JSONResponse as _JSONResponse
-
-@app.exception_handler(Exception)
-async def _debug_exception_handler(request: _Request, exc: Exception):
-    return _JSONResponse(
-        status_code=500,
-        content={"debug_traceback": _tb.format_exc()},
-    )
-# END DEBUG_TRACEBACK_HANDLER
