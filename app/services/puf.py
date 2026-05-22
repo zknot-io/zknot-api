@@ -44,7 +44,7 @@ def compare_phashes(baseline_hex: str, candidate_hex: str) -> Tuple[int, bool, s
     """Compare two phashes. Returns (hamming_distance, matched, confidence)."""
     h_baseline = imagehash.hex_to_hash(baseline_hex)
     h_candidate = imagehash.hex_to_hash(candidate_hex)
-    distance = h_baseline - h_candidate
+    distance = int(h_baseline - h_candidate)  # coerce numpy.int64 -> int for psycopg2
 
     if distance <= PUF_THRESHOLD_HIGH:
         confidence = "high"
