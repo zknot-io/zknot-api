@@ -12,7 +12,6 @@ They are auxiliary identity data tied to a unit's POWERVERIFY_UNIT artifact.
 """
 from sqlalchemy import Column, String, DateTime, Integer, JSON, ForeignKey
 from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
 from app.database import Base
 
 
@@ -36,9 +35,3 @@ class PufRecord(Base):
     confidence = Column(String(16), nullable=True)      # 'high', 'medium', 'low', 'fail'
 
     captured_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    artifact = relationship(
-        "Artifact",
-        foreign_keys=[short_code],
-        primaryjoin="PufRecord.short_code == Artifact.short_code",
-    )
