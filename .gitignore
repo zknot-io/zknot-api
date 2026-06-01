@@ -2,3 +2,15 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+
+# Secrets — never commit
+*.env
+.env
+*.env.*
+*.key
+*.pem
+secrets/
+# Backups / scratch
+*.bak*
+*.tmp
+*.swp
