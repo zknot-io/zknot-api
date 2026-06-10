@@ -22,6 +22,14 @@ class VerifyResponse(BaseModel):
     chain_integrity: bool        # full chain walked and verified
     metadata: Optional[Dict[str, Any]]
     verification_message: str    # human-readable status for the widget
+    # v1-record reproduction fields (client-side verification — VER-33).
+    # Lifted from metadata when present; null on legacy/placeholder records,
+    # which the browser verifier reports honestly as CANNOT VERIFY.
+    signed_payload_hex: Optional[str] = None
+    record_version: Optional[str] = None
+    identity_tier: Optional[str] = None
+    presence_binding_type: Optional[str] = None
+    content_binding_type: Optional[str] = None
 
 
 class ChainVerifyResponse(BaseModel):

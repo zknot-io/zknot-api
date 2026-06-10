@@ -29,7 +29,13 @@ router = APIRouter(prefix="/v1", tags=["verify"])
 
 def build_verify_response(artifact, chain_entry, db) -> VerifyResponse:
     integrity_ok, _ = verify_chain_integrity(db)
+    m = artifact.metadata_ or {}
     return VerifyResponse(
+        signed_payload_hex=m.get("signed_payload_hex"),
+        record_version=m.get("record_version"),
+        identity_tier=m.get("identity_tier"),
+        presence_binding_type=m.get("presence_binding_type"),
+        content_binding_type=m.get("content_binding_type"),
         verified=True,
         short_code=artifact.short_code,
         artifact_id=artifact.artifact_id,

@@ -10,6 +10,7 @@ class ArtifactType(str, enum.Enum):
     TRUST_SEAL = "TRUST_SEAL"
     COMBINED_SESSION = "COMBINED_SESSION"
     POWERVERIFY_UNIT = "POWERVERIFY_UNIT"  # Manufacturing birth certificate (PAT-002, PAT-019)
+    DEV_SIGN = "DEV_SIGN"  # Software dev-key record (rail bootstrap; SELF-ASSERTED, no presence claim)
 
 
 class Artifact(Base):
