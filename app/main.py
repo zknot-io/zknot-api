@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import init_db
-from app.routers import verify, attest, units
+from app.routers import verify, attest, units, trustseal
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +33,7 @@ app.add_middleware(
 app.include_router(verify.router)
 app.include_router(attest.router)
 app.include_router(units.router)
+app.include_router(trustseal.router)
 
 
 @app.on_event("startup")
@@ -49,6 +50,7 @@ def root():
         "version": "0.3.0",
         "verify": "GET /v1/verify/{short_code}",
         "attest": "POST /v1/attest",
+        "seal_register": "POST /v1/seal/register",
         "provision": "POST /v1/units/provision",
         "docs": "/docs",
     }
