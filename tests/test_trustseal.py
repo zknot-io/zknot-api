@@ -127,6 +127,41 @@ def test_repost_is_idempotent(client):
     assert resp.json()["short_code"] == short_code
 
 
+def test_verify_is_client_reproducible(client):
+    """The verify response must carry everything the browser verifier needs to
+    reproduce the check in-page — otherwise verifyknot.io shows
+    'CANNOT VERIFY — RECORD DATA INCOMPLETE'.
+
+    Asserts the five reproduction fields are populated (not null), are honest
+    for a passive seal, and that an INDEPENDENT re-hash of signed_payload_hex
+    equals challenge_hash — i.e. signed_payload_hex really is the bytes the
+    registry signature covers.
+    """
+    import hashlib
+
+    short_code = client.post(
+        "/v1/seal/register", json={"object_desc": "client repro", "batch": "B9"}
+    ).json()["short_code"]
+    v = client.get(f"/v1/verify/{short_code}").json()
+
+    # All reproduction fields present (the bug was these coming back null).
+    assert v["signed_payload_hex"], "signed_payload_hex must be present"
+    assert v["record_version"] == "v1"
+    # Identity is registry-asserted: not self-asserted, not a presence tier.
+    assert v["identity_tier"] == "registry-asserted"
+    # A passive seal honestly binds neither presence nor content.
+    assert v["presence_binding_type"] == "none"
+    assert v["content_binding_type"] == "none"
+
+    # The core client-side reproduction: re-hash the signed bytes ourselves and
+    # confirm they reproduce challenge_hash. This is exactly what the browser does.
+    rehashed = hashlib.sha256(bytes.fromhex(v["signed_payload_hex"])).hexdigest()
+    assert rehashed == v["challenge_hash"], (
+        "signed_payload_hex must be the exact bytes the signature covers: "
+        "SHA-256(signed_payload_hex) must equal challenge_hash"
+    )
+
+
 def test_honesty_invariants(client):
     short_code = client.post(
         "/v1/seal/register", json={"object_desc": "honesty", "batch": "B1"}

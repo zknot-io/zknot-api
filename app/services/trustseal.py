@@ -27,11 +27,18 @@ from app.models.chain import ChainEntry
 from app.schemas.artifact import ArtifactIngest
 from app.services.attestation import ingest_artifact
 from app.services.registry_signer import (
+    REGISTRY_IDENTITY_TIER,
     REGISTRY_KEY_ID,
+    SEAL_RECORD_VERSION,
     canonical_seal_payload,
     seal_challenge_hash,
     sign_seal_payload,
 )
+
+# A passive seal binds neither presence nor content. Used for BOTH the legacy
+# honesty keys (presence_binding/content_binding) and the typed keys the verifier
+# reproduces (presence_binding_type/content_binding_type) so the two cannot drift.
+NO_BINDING = "none"
 
 
 def register_seal(
@@ -63,12 +70,24 @@ def register_seal(
         signed_at=signed_at,
         metadata={
             # Honesty bindings — a passive seal proves neither presence nor content.
-            "presence_binding": "none",
-            "content_binding": "none",
+            "presence_binding": NO_BINDING,
+            "content_binding": NO_BINDING,
             "signed_by": REGISTRY_KEY_ID,
             "product": "TrustSeal",
             "object_desc": object_desc or "",
             "batch": batch or "",
+            # Client-verifiable reproduction fields (VER-33). The browser verifier
+            # lifts these via build_verify_response and re-hashes signed_payload_hex
+            # to confirm it equals challenge_hash. signed_payload_hex is the EXACT
+            # canonical bytes the registry signature covers — challenge_hash is its
+            # SHA-256, so SHA-256(bytes.fromhex(signed_payload_hex)) == challenge_hash.
+            "signed_payload_hex": canonical.hex(),
+            "record_version": SEAL_RECORD_VERSION,
+            # Registry-asserted identity — honestly not self-asserted, not a presence tier.
+            "identity_tier": REGISTRY_IDENTITY_TIER,
+            # Typed bindings the verifier reads (distinct from the legacy keys above).
+            "presence_binding_type": NO_BINDING,
+            "content_binding_type": NO_BINDING,
         },
     )
 
