@@ -41,6 +41,16 @@ from app.services.crypto import sha256_hex
 # metadata.signed_by. NEVER use a value that could be mistaken for ATECC silicon.
 REGISTRY_KEY_ID = "zknot-registry-v1"
 
+# Identity tier asserted by a registry-signed seal. A passive seal's identity is
+# vouched for by the registry key — it is NOT self-asserted by a device, and it
+# is NOT any presence/hardware tier. The verifier shows this verbatim, so the
+# value must read honestly.
+REGISTRY_IDENTITY_TIER = "registry-asserted"
+
+# Record schema version understood by the client-side (browser) verifier — the
+# "v1-record reproduction" contract in schemas/verify.py.
+SEAL_RECORD_VERSION = "v1"
+
 PRIVKEY_ENV_VAR = "ZKNOT_REGISTRY_PRIVKEY_PEM"
 
 
