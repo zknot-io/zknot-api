@@ -17,6 +17,16 @@ class ArtifactIngest(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(default={}, description="Case ID, operator, location, notes")
 
 
+class SealRegisterRequest(BaseModel):
+    """Body for POST /v1/seal/register — passive TrustSeal registration.
+
+    Both fields optional: a seal can be registered with no operator-supplied
+    description. object_desc is free human text; batch is an operator batch tag.
+    """
+    object_desc: Optional[str] = Field(None, description="Human description of the sealed object")
+    batch: Optional[str] = Field(None, description="Operator batch identifier")
+
+
 class ArtifactResponse(BaseModel):
     artifact_id: str
     artifact_type: ArtifactType
