@@ -4,9 +4,25 @@ from app.config import settings
 from app.database import init_db
 from app.routers import verify, attest, units, trustseal
 import logging
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+VERSION = "0.3.0"
+
+
+def build_id() -> str:
+    """Deploy marker — lets a rollout be confirmed WITHOUT minting a seal.
+
+    Railway injects RAILWAY_GIT_COMMIT_SHA at build time, so each deploy reports
+    the exact commit it was built from. Poll GET / and wait for `build` to show
+    the new short SHA; that beats timestamp-guessing and registers no chain
+    records. Falls back to VERSION when running outside Railway (local/dev),
+    where there is no per-commit marker.
+    """
+    sha = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "").strip()
+    return sha[:7] if sha else VERSION
 
 app = FastAPI(
     title="ZKNOT Platform API",
@@ -16,7 +32,7 @@ app = FastAPI(
         "POST an attestation artifact from a ZKKey or PowerVerify device, get back a "
         "short code (PAT-010). Anyone can verify it at verifyknot.io with no login required."
     ),
-    version="0.3.0",
+    version=VERSION,
     contact={"name": "ZKNOT, Inc.", "email": "ops@zknot.io"},
     docs_url="/docs",
     redoc_url="/redoc",
@@ -47,7 +63,8 @@ def root():
     return {
         "service": "ZKNOT Platform API",
         "status": "operational",
-        "version": "0.3.0",
+        "version": VERSION,
+        "build": build_id(),
         "verify": "GET /v1/verify/{short_code}",
         "attest": "POST /v1/attest",
         "seal_register": "POST /v1/seal/register",
@@ -58,5 +75,5 @@ def root():
 
 @app.get("/health", tags=["health"])
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "build": build_id()}
 
