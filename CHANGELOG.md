@@ -5,6 +5,55 @@ All notable changes to the ZKNOT Platform API are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Device-signed WitnessMark provisioning.** `POST /v1/units/provision` now
+  accepts a device-signed birth record. When `public_key` + `signature` are
+  present, the unit's own secure element (OPTIGA on WitnessMark) has signed the
+  canonical provision challenge and the record flows through the standard ECDSA
+  verification path in `ingest_artifact` — no bypass, no per-type branching in
+  verification. A record persists only if the signature verifies.
+  - Canonical challenge (device signs its SHA-256):
+    `ZKNOT-UNIT-PROVISION|<serial_number>|<batch_id>|<manufacture_date ISO>`
+    (`manufacture_date` is `date.isoformat()`, `YYYY-MM-DD`).
+  - `signature` = raw `r||s` hex (64 bytes); `public_key` = `X||Y` hex (64 bytes,
+    optional `0x04` prefix) — same formats `/v1/attest` already enforces.
+- `ArtifactType.WITNESSMARK_UNIT` for WitnessMark birth records.
+- `ProvisionRequest` serial pattern widened to `^(PV\d+-\d{5}|WM-\d{4,5})$`
+  (accepts both `PV1-00001` and `WM-0001`). New optional fields: `artifact_type`
+  (defaults to `POWERVERIFY_UNIT` for backward compatibility), `public_key`,
+  `signature`, `signed_at`. The existing PowerVerify QC tool sends none of these
+  and is unaffected at the wire level.
+
+### Changed
+- Provisioning idempotency key is now `(serial_number, artifact_type)` rather
+  than `serial_number` alone, so a WM and a PV serial can never collide.
+
+### Migration notes
+- **Run against prod BEFORE deploying this build** (no Alembic in this repo —
+  native PG enum requires a manual `ALTER TYPE`):
+
+  ```sql
+  ALTER TYPE artifacttype ADD VALUE 'WITNESSMARK_UNIT';
+  ```
+
+  The enum value must exist in the database before any code that writes it runs,
+  or provisioning a WM unit will raise a `DataError`. `ADD VALUE` cannot run
+  inside a transaction block on older PG — run it standalone.
+
+### Known issues
+- **Legacy PowerVerify provisioning (HMAC path) is broken and stays broken in
+  this build.** A `POST /v1/units/provision` with no `public_key`/`signature`
+  takes the server-side HMAC mint, which sets `public_key` to the non-hex
+  placeholder `MANUFACTURER_PUBKEY`. Since v0.3.0's real ECDSA runs
+  unconditionally at ingest, that record is rejected with HTTP 400
+  ("public key is not valid hex"). This is intentional for now: no verification
+  bypass may enter the rail. The fix is a real manufacturer ECDSA key (deferred
+  to PowerVerify Rev 2), at which point PV joins the same device-signed path.
+  The behavior is pinned by a test (`test_units.py`) so the eventual fix is a
+  deliberate, reviewed change rather than a silent one.
+
 ## [0.3.0] - 2026-05-20
 
 ### Security

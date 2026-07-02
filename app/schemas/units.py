@@ -8,17 +8,34 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, Dict, Any
 from datetime import datetime, date
 
+from app.models.artifact import ArtifactType
+
 
 class ProvisionRequest(BaseModel):
-    """Sent by the QC tool (provision_unit.py) for each finished unit."""
+    """Sent by the QC tool (provision_unit.py) for each finished unit.
+
+    Two paths:
+      - Legacy PowerVerify (no public_key/signature): server HMAC mint (KNOWN BROKEN,
+        see CHANGELOG — real ECDSA at ingest rejects the placeholder manufacturer key).
+      - Device-signed WitnessMark (public_key + signature present): the unit's OPTIGA
+        signs the canonical provision challenge; flows through the normal ECDSA path.
+    """
     serial_number: str = Field(
-        ..., pattern=r"^PV\d+-\d{5}$",
-        description="e.g. PV1-00001 — printed on the back-of-board label"
+        ..., pattern=r"^(PV\d+-\d{5}|WM-\d{4,5})$",
+        description="e.g. PV1-00001 (PowerVerify) or WM-0001 (WitnessMark) — printed on the back-of-board label"
     )
     batch_id: str = Field(..., max_length=32,
                           description="e.g. BATCH-001")
     manufacture_date: date
     build_notes: Optional[str] = None
+    # Backward compatible: the PowerVerify QC tool sends none of the fields below.
+    artifact_type: ArtifactType = ArtifactType.POWERVERIFY_UNIT
+    public_key: str | None = Field(
+        default=None,
+        description="Device public key (PEM or hex) — stored on the artifact to bind unit to silicon"
+    )
+    signature: str | None = None
+    signed_at: datetime | None = None
 
 
 class ProvisionResponse(BaseModel):

@@ -78,6 +78,10 @@ def provision(req: ProvisionRequest, db: Session = Depends(get_db)):
         batch_id=req.batch_id,
         manufacture_date=req.manufacture_date,
         build_notes=req.build_notes or "",
+        artifact_type=req.artifact_type,
+        public_key=req.public_key,
+        signature=req.signature,
+        signed_at=req.signed_at,
     )
 
     qr_url = _short_code_url(artifact.short_code)
