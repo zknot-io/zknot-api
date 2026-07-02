@@ -35,3 +35,19 @@ def test_build_id_falls_back_to_version(monkeypatch):
     """Outside Railway (no SHA) build_id reports the package version."""
     monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
     assert main.build_id() == main.VERSION
+"""Health/readiness endpoint tests."""
+
+
+def test_health_liveness(client):
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
+def test_healthz_readiness_ok(client):
+    """DB reachable (in-memory SQLite) → 200 with db:ok."""
+    r = client.get("/healthz")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["db"] == "ok"

@@ -1,7 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 from app.config import settings
-from app.database import init_db
+from app.database import init_db, get_db
 from app.routers import verify, attest, units, trustseal
 import logging
 import os
@@ -75,5 +77,24 @@ def root():
 
 @app.get("/health", tags=["health"])
 def health():
+    """Liveness — static, no dependencies. Safe as Railway's internal healthcheck."""
     return {"status": "ok", "build": build_id()}
+
+
+@app.get("/healthz", tags=["health"])
+def healthz(response: Response, db: Session = Depends(get_db)):
+    """Readiness — executes a trivial query so a dropped or exhausted DB pool
+    surfaces as HTTP 503 instead of a silent Cloudflare 520.
+
+    Point the external uptime monitor HERE. Keep Railway's own healthcheck on
+    /health (liveness) so a transient DB blip can't trigger a container restart
+    loop — the pool already uses pool_pre_ping to recover stale connections.
+    """
+    try:
+        db.execute(text("SELECT 1"))
+        return {"status": "ok", "db": "ok", "build": build_id()}
+    except Exception as exc:  # exercised only against a live DB
+        logger.error("healthz DB check failed: %s", exc)
+        response.status_code = 503
+        return {"status": "degraded", "db": "error", "build": build_id()}
 
