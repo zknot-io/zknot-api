@@ -96,19 +96,53 @@ Run **read-only** against a production replica (or production, read-only) **befo
 
 ### A.0 Back up first
 
+> **CORRECTED 2026-07-14.** The original version of this section specified
+> `pg_dump --table=chain_entries --table=artifacts`. **That command produces a
+> dump that cannot be restored.** `--table` does not emit the `CREATE TYPE` for
+> the `artifacttype` enum that `artifacts` depends on, so on restore
+> `CREATE TABLE artifacts` fails and **every artifact row is silently lost**:
+>
+> ```
+> pg_restore: error: type "public.artifacttype" does not exist
+> pg_restore: error: relation "public.artifacts" does not exist   (x10)
+> pg_restore: warning: errors ignored on restore: 11
+> ```
+>
+> `chain_entries` restores fine, which is the trap: you are left with a chain of
+> hashes pointing at artifacts that no longer exist, and not one verifiable
+> record. **The signatures live in `artifacts`.**
+>
+> Worse, the original verification step **passed on the broken dump**:
+> `pg_restore --list` happily lists artifact TABLE DATA that will never load, and
+> `pg_restore` exits **0** while printing "errors ignored". Neither a `--list`
+> nor an exit code proves a dump is restorable.
+>
+> **A dump is not a backup until it has been restored and verified.**
+
 ```bash
-# Full logical backup of the affected tables, before ANY other step.
+# FULL logical backup — no --table. The dump must carry dependent types
+# (e.g. the artifacttype enum), or artifacts cannot be recreated.
 pg_dump "$DATABASE_URL" \
-  --table=chain_entries --table=artifacts \
   --format=custom --file="chain_backup_$(date -u +%Y%m%dT%H%M%SZ).dump"
 
-# Verify the dump is restorable before trusting it.
-pg_restore --list "chain_backup_<stamp>.dump" | head
+# MANDATORY: restore into a scratch database and count. This — not --list,
+# not exit 0 — is the acceptance criterion for this step.
+createdb restore_check
+pg_restore -d restore_check --no-owner "chain_backup_<stamp>.dump"   # expect 0 errors
+psql restore_check -c "SELECT COUNT(*) FROM chain_entries;" \
+                   -c "SELECT COUNT(*) FROM artifacts;"
+# Both counts MUST equal production. Then run the chain verifier against the
+# restored copy: a backup that restores but does not verify is not a backup.
 
 # Row counts to reconcile against after any change.
 psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM chain_entries;" \
                      -c "SELECT COUNT(*) FROM artifacts;"
 ```
+
+**Client version:** `pg_dump`/`pg_restore` must be **>= the server major version**
+(production is Postgres 18.3). An older client refuses outright. If the local
+client is older, use the matching image:
+`docker run --rm postgres:18.3 pg_dump …`.
 
 Railway note: confirm whether the managed Postgres has PITR/automated snapshots and record the retention window. The `pg_dump` above is required regardless — do not rely solely on the provider.
 
