@@ -24,6 +24,7 @@ from app.config import settings
 from app.models.artifact import Artifact, ArtifactType
 from app.models.chain import ChainEntry
 from app.schemas.artifact import ArtifactIngest
+from app.services.trust_anchor import ensure_anchored
 from app.services.attestation import ingest_artifact
 
 
@@ -147,6 +148,25 @@ def provision_unit(
     artifact_id = str(uuid.uuid4())
 
     if public_key and signature:
+        # API-01 — provisioning IS enrolment. This endpoint is Bearer-authed
+        # (ZKNOT_PROVISIONING_TOKEN), and minting a birth record for a unit is
+        # precisely the act of ZKNOT vouching for that unit's secure element.
+        # So the device's key joins the trust anchor here, at the one moment we
+        # have authenticated grounds to trust it. This is what keeps the anchor
+        # from being a hand-maintained list that drifts: the only way in is
+        # through an authenticated ZKNOT process.
+        ensure_anchored(
+            db,
+            public_key,
+            label=serial_number,
+            product=str(
+                artifact_type.value
+                if hasattr(artifact_type, "value")
+                else artifact_type
+            ).lower(),
+            note=f"Enrolled at provisioning of {serial_number} (batch {batch_id}).",
+        )
+
         # --- Device-signed path: real ECDSA via ingest verification (no bypass) ---
         challenge_hash = provision_challenge_hash(serial_number, batch_id, manufacture_date)
         payload = ArtifactIngest(

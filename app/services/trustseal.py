@@ -26,6 +26,7 @@ from app.models.artifact import Artifact, ArtifactType
 from app.models.chain import ChainEntry
 from app.schemas.artifact import ArtifactIngest
 from app.services.attestation import ingest_artifact
+from app.services.trust_anchor import ensure_anchored
 from app.services.registry_signer import (
     REGISTRY_IDENTITY_TIER,
     REGISTRY_KEY_ID,
@@ -58,6 +59,20 @@ def register_seal(
     canonical = canonical_seal_payload(object_desc, batch, signed_at)
     challenge_hash = seal_challenge_hash(canonical)
     signature_hex, public_key_hex = sign_seal_payload(canonical)
+
+    # API-01 — the registry signer is ZKNOT's own key, held as a server secret
+    # (ZKNOT_REGISTRY_PRIVKEY_PEM). Nobody else can produce this signature, so
+    # it is trusted by construction and self-anchors on use. Doing this here
+    # rather than as a manual seeding step means the anchor cannot drift out of
+    # sync with the key actually in the environment — including after a
+    # rotation, where the new key anchors itself on its first seal.
+    ensure_anchored(
+        db,
+        public_key_hex,
+        label=REGISTRY_KEY_ID,
+        product="registry",
+        note="ZKNOT registry signer — self-anchored on use; server-held secret.",
+    )
 
     payload = ArtifactIngest(
         artifact_id=artifact_id,
