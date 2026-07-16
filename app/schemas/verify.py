@@ -7,6 +7,21 @@ from app.models.artifact import ArtifactType
 class VerifyResponse(BaseModel):
     """Response shape for GET /v1/verify/{code} — maps directly to website widget DOM fields"""
     verified: bool
+    # API-01 — what `verified` is actually made of.
+    #
+    # `verified` was a hardcoded True for every record, including records signed
+    # by a key nobody vouched for. It is now the AND of the three checks below,
+    # and they are published individually so a skeptic can see which one failed
+    # rather than taking a bare boolean on trust.
+    #
+    # signature_valid: the stored signature re-verifies against the stored key
+    #                  and digest, re-computed on this request.
+    # key_anchored:    the signing key is one ZKNOT vouches for (trusted_keys).
+    #                  False on legacy records signed before the anchor existed.
+    # anchor:          which signer, when anchored — e.g. "hashstamp-worker".
+    signature_valid: bool = False
+    key_anchored: bool = False
+    anchor: Optional[str] = None
     short_code: str
     artifact_id: str
     artifact_type: ArtifactType
