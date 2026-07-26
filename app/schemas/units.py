@@ -21,9 +21,18 @@ class ProvisionRequest(BaseModel):
         signs the canonical provision challenge; flows through the normal ECDSA path.
     """
     serial_number: str = Field(
-        ..., pattern=r"^(PV\d+-\d{5}|WM-\d{4,5})$",
-        description="e.g. PV1-00001 (PowerVerify) or WM-0001 (WitnessMark) — printed on the back-of-board label"
+        ..., pattern=r"^(PV\d+-\d{5}|WM-\d{4,5}|VT-A-\d{6})$",
+        description=(
+            "e.g. PV1-00001 (PowerVerify), WM-0001 (WitnessMark), VT-A-000005 (Vitni) — "
+            "printed on the back-of-board label"
+        )
     )
+    # This pattern is the ONLY place the device-id shape is enforced at the API boundary,
+    # so it is also where the class list is effectively defined for callers. VT-A is the
+    # Vitni class, ratified 2026-07-26 in DECISION-VITNI-DEVICE-CLASS-001, and it EXTENDS
+    # HW-001 §3.4.2 -- that document predates the Vitni brand and lists only PV-C, PV-A,
+    # ZK-K and ZK-A. Anything added here should exist in that decision trail first;
+    # a prefix that appears only in a regex is a class nobody agreed to.
     batch_id: str = Field(..., max_length=32,
                           description="e.g. BATCH-001")
     manufacture_date: date
