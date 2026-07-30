@@ -20,6 +20,7 @@ from app.models.artifact import Artifact, ArtifactType
 from app.schemas.artifact import ArtifactIngest, ArtifactResponse
 from app.services.api_keys import require_api_key
 from app.services.attestation import ingest_artifact
+from app.services.record_binding import binding_required
 from app.services.trust_anchor import is_anchored
 
 router = APIRouter(prefix="/v1", tags=["attest"])
@@ -110,6 +111,27 @@ def _enforce_attest_boundary(payload: ArtifactIngest, db: Session) -> None:
                 f"Reserved metadata key(s) {', '.join(offending)}: these are derived "
                 "by the server from what it can verify, and a record may not carry "
                 "its own verification result."
+            ),
+        )
+
+    # AB-1 endpoint policy. The canonical-record binding is opt-in during rollout
+    # so the Device SDK, the HashStamp worker and firmware can adopt content_hash
+    # without a flag day. This env var is what turns it from available into
+    # required — a binding nothing is obliged to use is not a binding.
+    #
+    # Kept in the router, not in ingest_artifact: provision_unit() binds its
+    # identity through the provisioning challenge instead, and register_seal signs
+    # a payload with no device at all. Requiring THIS binding in the shared
+    # service would break both.
+    if binding_required() and not payload.content_hash:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Identity binding is required on this deployment. Supply content_hash "
+                "and set challenge_hash to the canonical-record hash over "
+                "(artifact_id, artifact_type, device_id, session_id, signed_at, "
+                "content_hash). A signature that does not commit to the record it is "
+                "stored against does not attest to that record."
             ),
         )
 

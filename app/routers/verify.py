@@ -28,6 +28,7 @@ from app.services.crypto import (
     InvalidSignatureFormat,
     verify_signature,
 )
+from app.services.record_binding import derive_identity_binding
 from app.services.trust_anchor import is_anchored
 
 router = APIRouter(prefix="/v1", tags=["verify"])
@@ -143,6 +144,11 @@ def build_verify_response(artifact, chain_entry, db) -> VerifyResponse:
         ),
         presence_binding_type=m.get("presence_binding_type"),
         content_binding_type=m.get("content_binding_type"),
+        # AB-1. Recomputed here rather than lifted from metadata like the two
+        # above — those describe the physical article and only the minting
+        # service can know them; this one is a cryptographic fact about the
+        # stored row, so it is checked, not reported.
+        identity_binding_type=derive_identity_binding(artifact),
         verified=verified,
         signature_valid=signature_valid,
         key_anchored=anchor_result.anchored,

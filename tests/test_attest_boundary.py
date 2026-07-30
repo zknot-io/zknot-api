@@ -193,30 +193,33 @@ def test_caller_cannot_self_promote_to_registered(client, db_session):
 # 3. The binding gap — the signature does not cover the record
 # =====================================================================
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "OPEN DEFECT, not yet ruled. Closing it means requiring challenge_hash to "
-        "be the hash of a canonical record covering device_id and artifact_type — "
-        "a wire-format change affecting the Device SDK, the HashStamp worker and "
-        "firmware, so it is a published-interface decision and not a unilateral "
-        "edit (CLAUDE.md Git rule 8). strict=True so this flips to a FAILURE the "
-        "moment someone fixes it without deleting the marker."
-    ),
-)
-def test_signature_must_cover_the_identity_it_is_stored_against(client, db_session):
+def test_signature_must_cover_the_identity_it_is_stored_against(client, db_session,
+                                                                monkeypatch):
     """The deepest one, and the reason the other two are possible.
 
-    ingest_artifact verifies `signature` over `challenge_hash` and nothing else. So
-    ONE signature can be stored against ANY device_id and ANY artifact_type. Below,
-    the identical (challenge_hash, signature) pair is filed twice under two different
-    devices and two different article types — and both come back verified: true.
+    CLOSED BY AB-1 — services/record_binding.py, exercised in detail by
+    tests/test_record_binding.py. This was an xfail(strict=True) when the defect
+    was open; it is now a live test, run with the binding requirement ON.
 
-    Contrast provision_unit(), which recomputes the challenge from
-    (serial_number, batch_id, manufacture_date) and therefore genuinely binds the
-    signature to the identity. That mechanism exists in this codebase already; it is
-    simply not applied on this endpoint.
+    Read the scope honestly: AB-1 is opt-in by default so the Device SDK, the
+    HashStamp worker and firmware can adopt content_hash without a flag day. With
+    ZKNOT_REQUIRE_IDENTITY_BINDING unset — which is what production runs until the
+    operator flips it — an unbound record is still accepted. That open window is
+    covered by test_record_binding.py::
+    test_unbound_records_are_still_accepted_while_the_flag_is_off, deliberately,
+    so the gap lives in the test run rather than only in a handback.
+
+    The original defect: ingest_artifact verified `signature` over `challenge_hash`
+    and nothing else, so ONE signature could be stored against ANY device_id and ANY
+    artifact_type, and both records returned verified: true. Below, the identical
+    (challenge_hash, signature) pair is filed twice under two different devices and
+    two different article types.
+
+    provision_unit() always did this correctly — it recomputes the challenge from
+    (serial_number, batch_id, manufacture_date). AB-1 generalises that mechanism
+    rather than inventing one.
     """
+    monkeypatch.setenv("ZKNOT_REQUIRE_IDENTITY_BINDING", "1")
     priv, pub = _anchored(db_session)
     base = _payload(priv, pub)
 
@@ -225,14 +228,9 @@ def test_signature_must_cover_the_identity_it_is_stored_against(client, db_sessi
     b = _post(client, {**base, "artifact_id": str(uuid.uuid4()),
                        "device_id": "DEVICE-B", "artifact_type": "DEV_SIGN"})
 
-    both_stored = a.status_code == 201 and b.status_code == 201
-    if both_stored:
-        va = client.get(f"/v1/verify/{a.json()['short_code']}").json()
-        vb = client.get(f"/v1/verify/{b.json()['short_code']}").json()
-        assert not (va["verified"] and vb["verified"]), (
-            "one signature, two identities, both 'verified: true' — the signature "
-            "does not bind device_id or artifact_type"
-        )
+    assert not (a.status_code == 201 and b.status_code == 201), (
+        "one signature, two identities, both stored — AB-1 did not close the binding gap"
+    )
 
 
 def test_caller_cannot_choose_its_own_public_short_code(client, db_session):

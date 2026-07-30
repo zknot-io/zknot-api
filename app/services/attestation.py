@@ -12,6 +12,7 @@ Implements the server-side ingestion logic for POST /v1/attest, including:
 - Chain append per PAT-004 §3.1 (Cryptographically Chained Ledger).
 """
 
+import hmac
 import logging
 from typing import Optional
 
@@ -30,6 +31,7 @@ from app.services.crypto import (
     derive_short_code,
     verify_signature,
 )
+from app.services.record_binding import record_challenge_hash
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,40 @@ def ingest_artifact(
             f"(short_code={existing.short_code} position={chain_entry.position})"
         )
         return existing, chain_entry, True
+
+    # 1b. AB-1 — if the caller supplied content_hash, the signature must commit to
+    #     this record's identity, not to a free-floating digest. Checked BEFORE the
+    #     signature so a mis-bound payload cannot reach the chain even if its
+    #     signature is perfect; a valid signature over the wrong record is exactly
+    #     the failure this closes.
+    #
+    #     Enforced here rather than in the router so EVERY caller that supplies
+    #     content_hash gets it verified — this is a correctness invariant on the
+    #     payload. Whether a record is REQUIRED to be bound is endpoint policy and
+    #     lives in routers/attest.py.
+    if payload.content_hash:
+        expected = record_challenge_hash(
+            artifact_id=payload.artifact_id,
+            artifact_type=payload.artifact_type.value,
+            device_id=payload.device_id,
+            session_id=payload.session_id,
+            signed_at=payload.signed_at,
+            content_hash=payload.content_hash,
+        )
+        if not hmac.compare_digest(expected, payload.challenge_hash):
+            logger.warning(
+                f"Artifact {payload.artifact_id} rejected: challenge_hash does not "
+                f"bind its identity (device_id={payload.device_id})"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Identity binding failed: challenge_hash is not the canonical-record "
+                    "hash for this artifact_id, artifact_type, device_id, session_id, "
+                    "signed_at and content_hash. The signature must commit to the record "
+                    "it is stored against."
+                ),
+            )
 
     # 2. Verify ECDSA signature against pubkey + challenge_hash.
     #    Throws on malformed inputs; returns False on mismatch.

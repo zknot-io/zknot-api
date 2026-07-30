@@ -11,6 +11,22 @@ class ArtifactIngest(BaseModel):
     device_id: str = Field(..., description="Hardware serial burned into ATECC608B")
     session_id: Optional[str] = Field(None, description="Shared UUID binding POWER_SESSION + ZKEY_SIGN")
     challenge_hash: str = Field(..., description="SHA-256 of the input data the user approved")
+    # AB-1. When present, this is the digest of what is actually being attested,
+    # and `challenge_hash` must equal the canonical-record hash computed over
+    # (artifact_id, artifact_type, device_id, session_id, signed_at, content_hash)
+    # — see services/record_binding.py. That is what makes the signature commit to
+    # the identity it is stored against rather than to a free-floating digest.
+    #
+    # Optional so existing SDK callers keep working during rollout. A record
+    # without it reports identity_binding_type "none", and
+    # ZKNOT_REQUIRE_IDENTITY_BINDING closes the door once the SDKs have adopted it.
+    content_hash: Optional[str] = Field(
+        None,
+        description=(
+            "AB-1: digest of the attested content. When supplied, challenge_hash "
+            "must be the canonical-record hash binding it to this record's identity."
+        ),
+    )
     signature: str = Field(..., description="ECDSA signature from secure element (hex or base64)")
     public_key: str = Field(..., description="Device public key for independent verification")
     signed_at: datetime = Field(..., description="RFC 3339 timestamp from device")
