@@ -45,6 +45,20 @@ class VerifyResponse(BaseModel):
     identity_tier: Optional[str] = None
     presence_binding_type: Optional[str] = None
     content_binding_type: Optional[str] = None
+    # AB-1 — does the signature commit to the identity this record is stored
+    # against? DERIVED on every request from the stored row, never read from a
+    # stored flag, so a caller cannot assert it and no backfill was needed for
+    # the records already on the chain. See services/record_binding.py.
+    #
+    #   "canonical-record"    signature covers artifact_id, artifact_type,
+    #                         device_id, session_id, signed_at, content_hash
+    #   "provision-challenge" signature covers (serial, batch_id, manufacture_date)
+    #   "none"                nothing binds the stored identity to the signature
+    #
+    # "none" is the honest state of most of the chain, not an error. Deliberately
+    # NOT wired into `verified` or `identity_tier`: what a weak binding should do
+    # to a published claim is a claims-authority decision, not this layer's.
+    identity_binding_type: Optional[str] = None
 
 
 class ChainVerifyResponse(BaseModel):

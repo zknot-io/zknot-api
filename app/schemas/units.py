@@ -22,8 +22,39 @@ class ProvisionRequest(BaseModel):
     """
     serial_number: str = Field(
         ..., pattern=r"^(PV\d+-\d{5}|WM-\d{4,5})$",
-        description="e.g. PV1-00001 (PowerVerify) or WM-0001 (WitnessMark) — printed on the back-of-board label"
+        description=(
+            "e.g. PV1-00001 (PowerVerify), WM-0001 (WitnessMark) — "
+            "printed on the back-of-board label"
+        )
     )
+    # This pattern is the ONLY place the device-id shape is enforced at the API boundary,
+    # so it is also where the class list is effectively defined for callers.
+    #
+    # VT-A-\d{6} WAS ADDED HERE AND IS NOW REMOVED. REGISTER-IDENTITY-NAMESPACES-001,
+    # RULED and in force 2026-07-30, retires `VT-A-######` outright and supersedes the
+    # widen-the-pattern approach BY NAME:
+    #
+    #     "note that task's brief was to *widen* the pattern to cover all legacy
+    #      prefixes, and this ruling supersedes that approach: the pattern narrows
+    #      instead."  -- REGISTER-IDENTITY-NAMESPACES-001 §6
+    #
+    # Leaving the hunk in would keep a retired format mintable, which is the one thing
+    # §6 exists to prevent. Migration 0004 (VITNI_UNIT enum) on the same branch is
+    # unaffected and stays -- it is additive and independent of the identifier shape.
+    #
+    # THE RULED TARGET IS A NARROWING, NOT THIS LINE:
+    #
+    #     UNIT_IDENTITY_RE = r"^ZKU-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$"
+    #
+    # It is NOT applied yet, deliberately. UNIT_IDENTITY_RE rejects every legacy form
+    # including PV1- and WM-, so applying it before the §5 identity pool exists would
+    # leave the write path unable to accept anything at all -- no ZKU- identity can be
+    # minted until the pool table, the vendored zknot_identity.py generator and the
+    # UNASSIGNED/ASSIGNED/VOID lifecycle are built. Narrow this line as part of that
+    # work, not before it. See ADDENDUM-HANDBACK-API-DB-INTEGRITY-001-A §6.
+    #
+    # Anything added here must exist in a decision trail first; a prefix that appears
+    # only in a regex is a class nobody agreed to.
     batch_id: str = Field(..., max_length=32,
                           description="e.g. BATCH-001")
     manufacture_date: date

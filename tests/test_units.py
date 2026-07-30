@@ -200,3 +200,121 @@ class TestProvisionEndpoint:
             headers=_PROV_HEADERS,
         )
         assert resp.status_code == 400, resp.text
+
+
+@pytest.mark.skip(
+    reason=(
+        "VT-A-###### is RETIRED. REGISTER-IDENTITY-NAMESPACES-001 (RULED 2026-07-30) "
+        "§6 retires the format and supersedes the widen-the-pattern approach by name; "
+        "the pattern narrows to ZKU- instead. This class tests a device-class scheme "
+        "that no longer exists. Replacement coverage belongs with the §5 identity pool "
+        "work, NOT here — see ADDENDUM-HANDBACK-API-DB-INTEGRITY-001-A §6."
+    )
+)
+class TestVitniProvision:
+    """POST /v1/units/provision — the VT-A (Vitni) device class. SUPERSEDED, SKIPPED.
+
+    Mirrors TestProvisionEndpoint's WitnessMark coverage. A new device class with no
+    test is a class that breaks silently the first time someone tidies a regex.
+
+    VT-A ratified 2026-07-26, DECISION-VITNI-DEVICE-CLASS-001. It extends HW-001
+    §3.4.2, which predates the Vitni brand and lists only PV-C, PV-A, ZK-K, ZK-A.
+
+    SKIPPED 2026-07-30, and the cost is stated rather than absorbed silently. Four
+    tests go dormant, two of which were passing and are real coverage:
+
+      - test_vitni_wrong_challenge_rejected   (canonical string is byte-exact)
+      - test_malformed_vitni_serial_rejected  (shape pinned at the schema boundary)
+
+    Both still pass today — every shape they list is refused by the narrowed pattern
+    too — but they are kept with the class rather than hoisted, because their premise
+    ("the VT-A class") is the thing that was retired. Hoisting them would preserve the
+    assertions and lose the reason they existed. They are rewritten against ZKU- when
+    the pool lands, or this class is deleted. Not left to be rediscovered.
+
+    Do NOT re-enable by widening the serial pattern. That is precisely what §6
+    supersedes, and CLAUDE.md rule 8 puts the published ruling above this file.
+    """
+
+    BATCH = "VITNI-PILOT-001"
+    MFG = date(2026, 7, 26)
+
+    def _payload(self, serial, public_key, signature):
+        return {
+            "serial_number": serial,
+            "batch_id": self.BATCH,
+            "manufacture_date": self.MFG.isoformat(),
+            "artifact_type": "VITNI_UNIT",
+            "public_key": public_key,
+            "signature": signature,
+        }
+
+    def test_vitni_device_signed_ok(self, client):
+        """VT-A-000005 correctly signed -> 201, and verify-by-code reports
+        verified:true — which requires key_anchored to be true, i.e. provisioning
+        really did enrol the key (services/units.py: "provisioning IS enrolment")."""
+        pub, sig = _device_sign("VT-A-000005", self.BATCH, self.MFG)
+        resp = client.post(
+            "/v1/units/provision",
+            json=self._payload("VT-A-000005", pub, sig),
+            headers=_PROV_HEADERS,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["short_code"]
+        assert body["serial_number"] == "VT-A-000005"
+
+        got = client.get(f"/v1/verify/{body['short_code']}")
+        assert got.status_code == 200, got.text
+        v = got.json()
+        assert v["verified"] is True
+        assert v["artifact_type"] == "VITNI_UNIT"
+        assert v["device_id"] == "VT-A-000005"
+
+    def test_vitni_wrong_challenge_rejected(self, client):
+        """A valid signature over the WRONG challenge -> 4xx. The canonical string is
+        byte-for-byte or nothing; services/units.py warns the bench signer must mirror
+        it exactly."""
+        pub, sig = _device_sign(
+            "VT-A-000005", self.BATCH, self.MFG,
+            over_challenge="ZKNOT-UNIT-PROVISION|VT-A-000005|VITNI-PILOT-001|1999-01-01",
+        )
+        resp = client.post(
+            "/v1/units/provision",
+            json=self._payload("VT-A-000005", pub, sig),
+            headers=_PROV_HEADERS,
+        )
+        assert 400 <= resp.status_code < 500, resp.text
+
+    def test_malformed_vitni_serial_rejected(self, client):
+        """Shapes that are NOT VT-A-NNNNNN must be refused at the schema boundary.
+
+        This regex is the only place the device-id shape is enforced for callers, so
+        it is worth pinning. VT-0005 in particular was the pre-ratification spelling
+        and would otherwise slip through a careless edit.
+        """
+        pub, sig = _device_sign("VT-A-000005", self.BATCH, self.MFG)
+        for bad in ("VT-0005", "VT-A-5", "VT-A-0000005", "vt-a-000005", "VT-B-000005"):
+            resp = client.post(
+                "/v1/units/provision",
+                json=self._payload(bad, pub, sig),
+                headers=_PROV_HEADERS,
+            )
+            assert resp.status_code == 422, f"{bad} should be rejected, got {resp.status_code}"
+
+    def test_vitni_and_powerverify_serials_do_not_collide(self, client):
+        """Idempotency is keyed on (serial_number, artifact_type). Same serial under a
+        different type must mint a SEPARATE artifact — this is the namespace property
+        that justifies VITNI_UNIT existing at all rather than reusing a type."""
+        pub, sig = _device_sign("VT-A-000009", self.BATCH, self.MFG)
+        a = client.post("/v1/units/provision",
+                        json=self._payload("VT-A-000009", pub, sig),
+                        headers=_PROV_HEADERS)
+        assert a.status_code == 201, a.text
+
+        # same serial, same signature, re-posted -> idempotent, same artifact back
+        b = client.post("/v1/units/provision",
+                        json=self._payload("VT-A-000009", pub, sig),
+                        headers=_PROV_HEADERS)
+        assert b.status_code in (200, 201), b.text
+        assert b.json()["short_code"] == a.json()["short_code"]

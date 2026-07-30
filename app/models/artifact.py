@@ -12,6 +12,17 @@ class ArtifactType(str, enum.Enum):
     POWERVERIFY_UNIT = "POWERVERIFY_UNIT"  # Manufacturing birth certificate (PAT-002, PAT-019)
     DEV_SIGN = "DEV_SIGN"  # Software dev-key record (rail bootstrap; SELF-ASSERTED, no presence claim)
     WITNESSMARK_UNIT = "WITNESSMARK_UNIT"  # Device-signed WitnessMark birth record (real ECDSA via OPTIGA)
+    VITNI_UNIT = "VITNI_UNIT"  # Device-signed Vitni birth record (ECDSA via ATECC608B, D1-gated)
+    # VITNI_UNIT is its own type on purpose. Idempotency for unit artifacts is keyed on
+    # (serial_number, artifact_type), which is what keeps WM and PV serials in separate
+    # namespaces so they can never collide. Filing a Vitni under POWERVERIFY_UNIT or
+    # WITNESSMARK_UNIT would merge two product lines in the chain and give up that
+    # property. WITNESSMARK_UNIT in particular is Ostensor's -- the enum value is frozen
+    # as a live prod value with display-name mapping only, so it must not be reused.
+    #
+    # Adding a value here does NOT change the database. Schema comes from
+    # Base.metadata.create_all(), which never alters existing types. See
+    # alembic/versions/0004_vitni_unit_type.py.
 
 
 class Artifact(Base):
