@@ -26,6 +26,12 @@ MFG = date(2026, 7, 26)
 DEPLOYED_TIER_VOCAB = {"SELF-ASSERTED", "registry-asserted", "REGISTERED"}
 
 
+# SERIALS HERE ARE INCIDENTAL. These tests are about tier DERIVATION, not about the
+# identifier shape — they only need a serial the write path admits. They were written
+# with VT-A-0000NN; REGISTER-IDENTITY-NAMESPACES-001 (RULED 2026-07-30) §6 retires that
+# format and narrows the pattern instead of widening it, so they now use WM-90NN. When
+# the §5 identity pool lands and the pattern narrows to UNIT_IDENTITY_RE, these move
+# again — to minted ZKU- identities drawn from the pool, not to hand-written strings.
 def _provision(client, serial, artifact_type="VITNI_UNIT"):
     pub, sig = _device_sign(serial, BATCH, MFG)
     resp = client.post(
@@ -49,7 +55,7 @@ class TestDerivedIdentityTier:
     def test_device_signed_unit_reads_registered(self, client):
         """The whole point. A device-signed, anchored, verifying birth record is
         REGISTERED — which is the ratified ceiling (D-VDC-3), reached at last."""
-        code, _ = _provision(client, "VT-A-000004")
+        code, _ = _provision(client, "WM-9004")
         v = client.get(f"/v1/verify/{code}").json()
         assert v["identity_tier"] == "REGISTERED"
         # and it agrees with the booleans it is derived from
@@ -61,7 +67,7 @@ class TestDerivedIdentityTier:
         """Revoking the key must move the tier DOWN on a record that is already
         written. A stored tier could not do this — it would keep asserting
         registration for a key ZKNOT has withdrawn."""
-        code, pub = _provision(client, "VT-A-000003")
+        code, pub = _provision(client, "WM-9003")
         assert client.get(f"/v1/verify/{code}").json()["identity_tier"] == "REGISTERED"
 
         from app.database import get_db
@@ -85,11 +91,11 @@ class TestDerivedIdentityTier:
         """A client-supplied tier is the API-01 sin — trust arriving with the thing
         being trusted. The provision schema has no such field, and the derived value
         must not be reachable from caller-controlled input."""
-        pub, sig = _device_sign("VT-A-000002", BATCH, MFG)
+        pub, sig = _device_sign("WM-9002", BATCH, MFG)
         resp = client.post(
             "/v1/units/provision",
             json={
-                "serial_number": "VT-A-000002",
+                "serial_number": "WM-9002",
                 "batch_id": BATCH,
                 "manufacture_date": MFG.isoformat(),
                 "artifact_type": "VITNI_UNIT",
@@ -107,7 +113,7 @@ class TestDerivedIdentityTier:
         """CA-ATTESTED is gated product-wide and is absent from the deployed
         TIER_VOCAB, so it renders as UNVERIFIED. Emitting it would be worse than
         emitting nothing."""
-        code, _ = _provision(client, "VT-A-000001")
+        code, _ = _provision(client, "WM-9001")
         tier = client.get(f"/v1/verify/{code}").json()["identity_tier"]
         assert tier in DEPLOYED_TIER_VOCAB
         assert tier != "CA-ATTESTED"
@@ -130,12 +136,12 @@ class TestDerivedIdentityTier:
         """Records with no provision_method keep returning None, exactly as today.
         The blast radius of this change is device-signed unit records and nothing
         else."""
-        code, _ = _provision(client, "VT-A-000005")
+        code, _ = _provision(client, "WM-9005")
         from app.database import get_db
         from app.main import app
         from app.models.artifact import Artifact
         db = next(app.dependency_overrides[get_db]())
-        a = db.query(Artifact).filter(Artifact.device_id == "VT-A-000005").one()
+        a = db.query(Artifact).filter(Artifact.device_id == "WM-9005").one()
         a.metadata_ = {k: v for k, v in (a.metadata_ or {}).items()
                        if k != "provision_method"}
         db.commit()

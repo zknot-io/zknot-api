@@ -202,14 +202,38 @@ class TestProvisionEndpoint:
         assert resp.status_code == 400, resp.text
 
 
+@pytest.mark.skip(
+    reason=(
+        "VT-A-###### is RETIRED. REGISTER-IDENTITY-NAMESPACES-001 (RULED 2026-07-30) "
+        "§6 retires the format and supersedes the widen-the-pattern approach by name; "
+        "the pattern narrows to ZKU- instead. This class tests a device-class scheme "
+        "that no longer exists. Replacement coverage belongs with the §5 identity pool "
+        "work, NOT here — see ADDENDUM-HANDBACK-API-DB-INTEGRITY-001-A §6."
+    )
+)
 class TestVitniProvision:
-    """POST /v1/units/provision — the VT-A (Vitni) device class.
+    """POST /v1/units/provision — the VT-A (Vitni) device class. SUPERSEDED, SKIPPED.
 
     Mirrors TestProvisionEndpoint's WitnessMark coverage. A new device class with no
     test is a class that breaks silently the first time someone tidies a regex.
 
     VT-A ratified 2026-07-26, DECISION-VITNI-DEVICE-CLASS-001. It extends HW-001
     §3.4.2, which predates the Vitni brand and lists only PV-C, PV-A, ZK-K, ZK-A.
+
+    SKIPPED 2026-07-30, and the cost is stated rather than absorbed silently. Four
+    tests go dormant, two of which were passing and are real coverage:
+
+      - test_vitni_wrong_challenge_rejected   (canonical string is byte-exact)
+      - test_malformed_vitni_serial_rejected  (shape pinned at the schema boundary)
+
+    Both still pass today — every shape they list is refused by the narrowed pattern
+    too — but they are kept with the class rather than hoisted, because their premise
+    ("the VT-A class") is the thing that was retired. Hoisting them would preserve the
+    assertions and lose the reason they existed. They are rewritten against ZKU- when
+    the pool lands, or this class is deleted. Not left to be rediscovered.
+
+    Do NOT re-enable by widening the serial pattern. That is precisely what §6
+    supersedes, and CLAUDE.md rule 8 puts the published ruling above this file.
     """
 
     BATCH = "VITNI-PILOT-001"
