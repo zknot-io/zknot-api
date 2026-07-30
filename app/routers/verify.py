@@ -33,6 +33,80 @@ from app.services.trust_anchor import is_anchored
 router = APIRouter(prefix="/v1", tags=["verify"])
 
 
+def _identity_tier(artifact, *, signature_valid: bool, anchored: bool):
+    """Derive the identity tier from what is true NOW, rather than reading a
+    stored claim.
+
+    THE DEFECT THIS FIXES
+    ---------------------
+    `provision_unit()` writes batch_id, manufacture_date, build_notes and
+    provision_method into artifact metadata — and no `identity_tier`. So every
+    device-signed birth record returns `identity_tier: null`. Measured against
+    live production 2026-07-28: WM-0001 (ZK-A4TZ-8NU) and WM-0002 (ZK-SW8B-E9Y)
+    both return null while returning verified/signature_valid/key_anchored true.
+
+    That is not cosmetic. The deployed verifier.js `mapApiResponse` defaults a
+    null tier to "SELF-ASSERTED", so the /v/ page renders the WEAKEST tier —
+    "no independent party vouches for it" — for a record whose key ZKNOT
+    demonstrably does vouch for. Confirmed by running the deployed module
+    against the live WM-0002 JSON.
+
+    Consequence: fixing the serial pattern and the artifact_type enum gets a
+    Vitni or Ostensor record ACCEPTED, and the page still says SELF-ASSERTED.
+    REGISTERED stays unreachable, and REGISTERED is the ratified ceiling
+    (DECISION-VITNI-DEVICE-CLASS-001 D-VDC-3). This is the last mile of D-A/D-B,
+    not a separate feature.
+
+    WHY DERIVED AND NOT STORED
+    --------------------------
+    Storing the tier at mint time freezes a claim that can later become false:
+    revoke a key and a stored "REGISTERED" keeps asserting registration. This
+    module already made that argument for `verified` (API-01, see below) — the
+    tier is the same kind of statement and gets the same treatment. A tier is a
+    claim about the record as it sits in the database now.
+
+    It is also why a caller cannot supply it. A client asserting its own tier is
+    exactly the API-01 sin: trust arriving with the thing being trusted.
+
+    THE LADDER
+    ----------
+    Vocabulary is the DEPLOYED verifier.js TIER_VOCAB, never a paraphrase
+    (CLAUDE.md). Its REGISTERED entry reads, verbatim:
+
+        proves: "The signing device's own keypair is on file in the ZKNOT
+                 registry."
+
+    which is precisely `key_anchored` for a device-signed unit — provisioning IS
+    enrolment (services/units.py). So REGISTERED is not a new assertion; it is
+    the name of a state this endpoint already computes and already returns as
+    two separate booleans.
+
+    CA-ATTESTED is never returned. It is gated product-wide until the X.509 SOP
+    is live, and the deployed verifier deliberately does not carry it — an
+    incoming CA-ATTESTED falls to TIER_DEFAULT and renders as UNVERIFIED.
+
+    Returns None for anything that is not a device-signed unit record, which
+    leaves every other record's behaviour exactly as it is today.
+    """
+    m = artifact.metadata_ or {}
+
+    # An explicitly recorded tier wins. TrustSeal records carry
+    # "registry-asserted" (services/trustseal.py) and that is a genuinely
+    # different claim — server-key-signed, not device-signed. Deriving over the
+    # top of it would silently upgrade a registry assertion into a device one.
+    stored = m.get("identity_tier")
+    if stored:
+        return stored
+
+    if m.get("provision_method") != "device-signed":
+        return None
+
+    # Both legs required. Anchored-but-unverifiable is not a registered device,
+    # it is a broken record, and the weakest honest tier is the right answer.
+    # A revoked key reports anchored=False and correctly falls back here too.
+    return "REGISTERED" if (signature_valid and anchored) else "SELF-ASSERTED"
+
+
 def build_verify_response(artifact, chain_entry, db) -> VerifyResponse:
     integrity_ok, _ = verify_chain_integrity(db)
     m = artifact.metadata_ or {}
@@ -62,7 +136,11 @@ def build_verify_response(artifact, chain_entry, db) -> VerifyResponse:
     return VerifyResponse(
         signed_payload_hex=m.get("signed_payload_hex"),
         record_version=m.get("record_version"),
-        identity_tier=m.get("identity_tier"),
+        identity_tier=_identity_tier(
+            artifact,
+            signature_valid=signature_valid,
+            anchored=anchor_result.anchored,
+        ),
         presence_binding_type=m.get("presence_binding_type"),
         content_binding_type=m.get("content_binding_type"),
         verified=verified,
