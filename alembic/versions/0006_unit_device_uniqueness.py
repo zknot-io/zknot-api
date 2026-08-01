@@ -4,9 +4,15 @@ Revision ID: 0006_unit_device_uniqueness
 Revises: 0005_identifier_freeze
 Create Date: 2026-07-29
 
-DRAFT — NOT RUN. Authored under CCPROMPT-API-MIGRATION-001 Phase 1, which forbids
-executing any migration. This file exists so the operator can rule on B-6 against a
-concrete artefact rather than a description. See DECISION-ARTIFACT-TYPE-001 §4.
+RULED — B-6, DECISION-ARTIFACT-TYPE-001 §4 (2026-07-29), and scoped to the closed
+legacy class by DECISION-PV-REV0-IDENTITY-001 (2026-08-01, Option C). Cleared to run:
+the mandatory duplicate pre-flight was run against production 2026-08-01 and the scoped
+predicate was proven to leave 0 remaining duplicate groups (8 rows covered, 20 excluded)
+BEFORE the ruling was taken — so this applies, rather than being hoped to.
+
+Authored under CCPROMPT-API-MIGRATION-001 Phase 1, which forbade executing any
+migration — that is why it was originally headed DRAFT — NOT RUN. The header is
+corrected here; the ordering requirement below (0004 first) still stands.
 
 
 WHAT THIS FIXES

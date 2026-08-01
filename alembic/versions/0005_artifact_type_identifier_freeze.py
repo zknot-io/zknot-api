@@ -4,9 +4,19 @@ Revision ID: 0005_identifier_freeze
 Revises: 0004_vitni_unit_type
 Create Date: 2026-07-28
 
-DRAFT — NOT RUN. Authored under CCPROMPT-API-MIGRATION-001 Phase 1, which forbids
-executing any migration. This file exists so the operator can rule on D-B against a
-concrete artefact rather than a description.
+RATIFIED 2026-07-29 — DECISION-ARTIFACT-TYPE-001 B-1, which ratifies this file AS
+DRAFTED and rules that `RATIFIED` stays EMPTY. So `upgrade()` returns immediately and
+this migration adds nothing: it is a NO-OP BY DESIGN, not an unfinished draft.
+
+That is the ruling's point, and it is worth stating plainly because an empty list looks
+like an omission. The prompt that produced this file asked for every type ZKNOT would
+issue this year; the file declined and stated the collision instead. B-1 ratified the
+declining. The three CANDIDATE values below each still have a real blocker and stay
+candidates.
+
+Authored under CCPROMPT-API-MIGRATION-001 Phase 1, which forbade executing any
+migration — that is why it was originally headed DRAFT — NOT RUN. That header outlived
+its ruling by four days and is corrected here rather than left to block a run.
 
 READ THIS BEFORE RULING
 =======================
