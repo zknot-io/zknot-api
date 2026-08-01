@@ -132,14 +132,55 @@ INDEX_NAME = "uq_artifacts_unit_device"
 # not a refactor — see DECISION-ARTIFACT-TYPE-001 §4 and 0005's RATIFIED/CANDIDATE split.
 UNIT_TYPES = ("POWERVERIFY_UNIT", "WITNESSMARK_UNIT", "VITNI_UNIT")
 
+# ── THE CLOSED LEGACY CLASS — DECISION-PV-REV0-IDENTITY-001, RULED 2026-08-01 ──
+#
+# The §4 pre-flight was run against production on 2026-08-01 and came back
+# NON-EMPTY: device_id 'ZK-EW6E-EERX' carries 20 POWERVERIFY_UNIT rows. Without
+# this exclusion, CREATE UNIQUE INDEX below fails — which is the migration working
+# correctly, not a bug in it.
+#
+# THOSE 20 ROWS ARE NOT DUPLICATES. One distinct pubkey, twenty distinct
+# short_codes. ZK-EW6E-EERX is the PowerVerify Rev 0 SOFTWARE SIGNER, not an
+# article — "one signing device for all Rev 0 units, single PC-resident pubkey"
+# (OPS/journal/2026-05-19_zkkey_connect_rev0_and_software_signer_pivot.md:23).
+#
+# So `device_id` means different things in different generations: the ARTICLE
+# serial for PV1-00001..5 and WM-0001/0002, the SIGNER identity for Rev 0. Those
+# twenty are twenty distinct articles recorded correctly under the scheme in force
+# in May. There was no TOCTOU incident. This index encodes an assumption — one
+# birth record per device_id — that was NEVER TRUE for that generation.
+#
+# WHY THIS IS NOT "WEAKENING THE INDEX", which DECISION-ARTIFACT-TYPE-001 §4
+# pre-emptively rejects: §4 anticipates an ACCIDENTAL duplicate from a retried
+# call, where relaxing the constraint would preserve a genuine defect. This is the
+# other case. Excluding a class whose semantics differ stops the index asserting
+# something about history that was never true, and leaves it at FULL strength for
+# every generation that does carry per-unit identity — which is the collision the
+# constraint actually exists to prevent.
+#
+# THE CLASS IS CLOSED. The 0.1/0.2-pc-keys software-signer line is retired; no new
+# member can appear. This is a fixed list, not a pattern, and it must never grow:
+# a new entry here would mean a NEW product line shipped without per-unit identity,
+# which is the thing to stop at review, not to accommodate here.
+#
+# Backfill (option A) is DEFERRED, NOT FORECLOSED — 17 of the 20 carry a structured
+# metadata label, all distinct, so it is tractable when it is ruled on its own.
+LEGACY_SHARED_SIGNER_IDS = ("ZK-EW6E-EERX",)
+
 
 def upgrade() -> None:
-    """One birth record per device. Fails loudly if duplicates already exist."""
+    """One birth record per device, except the ruled closed legacy class.
+
+    Fails loudly if duplicates exist in any generation that is NOT excluded —
+    which is the point, and is what caught ZK-EW6E-EERX in the first place.
+    """
     values = ", ".join(f"'{t}'" for t in UNIT_TYPES)
+    legacy = ", ".join(f"'{d}'" for d in LEGACY_SHARED_SIGNER_IDS)
     op.execute(
         f"CREATE UNIQUE INDEX {INDEX_NAME} "
         f"ON artifacts (device_id) "
-        f"WHERE artifact_type IN ({values})"
+        f"WHERE artifact_type IN ({values}) "
+        f"AND device_id NOT IN ({legacy})"
     )
 
 
