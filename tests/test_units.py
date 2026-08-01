@@ -189,17 +189,131 @@ class TestProvisionEndpoint:
         call with no device signature takes the HMAC mint, whose placeholder
         MANUFACTURER_PUBKEY is not valid hex, so real ECDSA at ingest rejects it
         with 400. This is PINNED intentionally — fixing it (a real manufacturer
-        key, PowerVerify Rev 2) must be a deliberate change to this assertion."""
+        key, PowerVerify Rev 2) must be a deliberate change to this assertion.
+
+        artifact_type is now sent EXPLICITLY. It used to be omitted and to arrive
+        as POWERVERIFY_UNIT by default; DECISION-ARTIFACT-TYPE-001 B-5 removed that
+        default, so omitting it now fails at the schema boundary with 422 and this
+        test would never reach the HMAC path it exists to pin. The omission case is
+        its own test — test_missing_artifact_type_rejected below."""
         resp = client.post(
             "/v1/units/provision",
             json={
                 "serial_number": "PV1-00001",
                 "batch_id": "BATCH-001",
                 "manufacture_date": self.MFG.isoformat(),
+                "artifact_type": "POWERVERIFY_UNIT",
             },
             headers=_PROV_HEADERS,
         )
         assert resp.status_code == 400, resp.text
+
+    # ---- DECISION-ARTIFACT-TYPE-001 B-5 -----------------------------------
+
+    def test_missing_artifact_type_rejected(self, client, db_session):
+        """(e) B-5: omitting artifact_type is refused at the boundary, naming the
+        field — it does NOT silently mint a POWERVERIFY_UNIT.
+
+        This is the whole of B-5. The call below carries a VALID public_key and a
+        VALID signature, so before the ruling it took the device-signed path, passed
+        real ECDSA, and wrote an immutable chained birth record under the wrong
+        product line — and anchored the device key under the wrong product with it.
+        """
+        pub, sig = _device_sign("WM-0009", self.BATCH, self.MFG)
+        resp = client.post(
+            "/v1/units/provision",
+            json={
+                "serial_number": "WM-0009",
+                "batch_id": self.BATCH,
+                "manufacture_date": self.MFG.isoformat(),
+                "public_key": pub,
+                "signature": sig,
+                # artifact_type deliberately absent
+            },
+            headers=_PROV_HEADERS,
+        )
+        assert resp.status_code == 422, resp.text
+        # The 422 must NAME the field, or the caller cannot tell what to fix.
+        missing = [
+            d for d in resp.json()["detail"]
+            if d.get("type") == "missing" and "artifact_type" in d.get("loc", [])
+        ]
+        assert missing, resp.text
+
+        # And nothing was written. Asserted against the table, not against an
+        # endpoint — the point of B-5 is the ROW that used to appear here.
+        from app.models.artifact import Artifact
+        assert (
+            db_session.query(Artifact).filter(Artifact.device_id == "WM-0009").count()
+            == 0
+        )
+
+    # ---- DECISION-ARTIFACT-TYPE-001 B-7 -----------------------------------
+
+    def test_same_device_different_type_conflicts(self, client):
+        """(f) B-7: a second birth record for one device under a DIFFERENT type is
+        a 409 naming the registered type — not a 500, and not a silent second record.
+
+        Migration 0006's partial unique index is on device_id ALONE. With the old
+        lookup — filtered on (device_id, artifact_type) — this call missed the
+        existing row, proceeded to INSERT, and took the unique violation as an
+        IntegrityError 500. The lookup and the constraint have to agree.
+
+        Note the harness has no such index (SQLite, create_all, migrations not run),
+        so a 500 here would be a plain duplicate row rather than an IntegrityError.
+        That makes this test STRICTLY about the application-level lookup, which is
+        what B-7 rules on.
+        """
+        pub, sig = _device_sign("WM-0007", self.BATCH, self.MFG)
+        first = client.post(
+            "/v1/units/provision",
+            json=self._payload("WM-0007", pub, sig),
+            headers=_PROV_HEADERS,
+        )
+        assert first.status_code == 201, first.text
+        original_code = first.json()["short_code"]
+
+        # Same device, same signed challenge, DIFFERENT declared type.
+        clash = dict(self._payload("WM-0007", pub, sig))
+        clash["artifact_type"] = "VITNI_UNIT"
+        resp = client.post(
+            "/v1/units/provision", json=clash, headers=_PROV_HEADERS
+        )
+        assert resp.status_code == 409, resp.text
+        detail = resp.json()["detail"]
+        # The registered type must be named — "conflict" alone does not tell the
+        # operator which product line already owns the device.
+        assert "WITNESSMARK_UNIT" in detail, detail
+
+        # The refusal changed nothing: the original record is intact and unchanged.
+        got = client.get(f"/v1/verify/{original_code}")
+        assert got.status_code == 200, got.text
+        assert got.json()["artifact_type"] == "WITNESSMARK_UNIT"
+
+    def test_same_device_same_type_still_idempotent(self, client):
+        """(g) The acceptance leg for (f). A refusal is only evidence if the same
+        call, unchanged, is still accepted — otherwise a broken lookup and a
+        correctly-firing conflict are indistinguishable.
+
+        Re-provisioning the same device under the SAME type returns the SAME
+        artifact, as it always did. B-7 narrowed nothing here.
+        """
+        pub, sig = _device_sign("WM-0008", self.BATCH, self.MFG)
+        first = client.post(
+            "/v1/units/provision",
+            json=self._payload("WM-0008", pub, sig),
+            headers=_PROV_HEADERS,
+        )
+        assert first.status_code == 201, first.text
+
+        again = client.post(
+            "/v1/units/provision",
+            json=self._payload("WM-0008", pub, sig),
+            headers=_PROV_HEADERS,
+        )
+        assert again.status_code == 201, again.text
+        assert again.json()["short_code"] == first.json()["short_code"]
+        assert again.json()["artifact_id"] == first.json()["artifact_id"]
 
 
 @pytest.mark.skip(

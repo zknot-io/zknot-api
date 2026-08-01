@@ -2,7 +2,8 @@
 Schemas for PowerVerify unit provisioning, customer registration, and PUF.
 
 These are higher-level workflow shapes; under the hood the provisioning
-endpoint creates a POWERVERIFY_UNIT artifact via the existing attest pipeline.
+endpoint creates a unit birth-record artifact — of the artifact_type the caller
+names, which is REQUIRED — via the existing attest pipeline.
 """
 from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, Dict, Any
@@ -59,8 +60,20 @@ class ProvisionRequest(BaseModel):
                           description="e.g. BATCH-001")
     manufacture_date: date
     build_notes: Optional[str] = None
-    # Backward compatible: the PowerVerify QC tool sends none of the fields below.
-    artifact_type: ArtifactType = ArtifactType.POWERVERIFY_UNIT
+    # REQUIRED — no default. DECISION-ARTIFACT-TYPE-001 B-5, ruled 2026-07-29.
+    #
+    # This field used to default to POWERVERIFY_UNIT "for backward compatibility"
+    # with the PowerVerify QC tool. On the device-signed path that default is live
+    # and unrepairable: a caller supplying a valid public_key and signature but
+    # omitting the type gets a real ECDSA verification and a successful, chained
+    # birth record filed under the WRONG PRODUCT LINE — and, because
+    # provision_unit() calls ensure_anchored() with product=artifact_type, the
+    # device's key is anchored under the wrong product too. Both are immutable.
+    #
+    # There is no correct default for a value that names a product line. A caller
+    # that omits it now gets a 422 naming the field, which is a fixed call rather
+    # than a permanent wrong record.
+    artifact_type: ArtifactType
     public_key: str | None = Field(
         default=None,
         description="Device public key (PEM or hex) — stored on the artifact to bind unit to silicon"

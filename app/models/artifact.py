@@ -26,6 +26,29 @@ class ArtifactType(str, enum.Enum):
     # alembic/versions/0004_vitni_unit_type.py.
 
 
+# The birth-record ("unit") types — the set over which one device has exactly one
+# record. DECISION-ARTIFACT-TYPE-001 B-6/B-7.
+#
+# THIS LIST AND `UNIT_TYPES` IN alembic/versions/0006_unit_device_uniqueness.py ARE
+# ONE FACT WRITTEN IN TWO PLACES, AND THEY MUST MOVE TOGETHER. 0006's partial unique
+# index uses that list as its predicate; provision_unit()'s idempotency lookup uses
+# this one. If they diverge, the lookup misses a row the index forbids and the honest
+# 409 becomes an IntegrityError 500 — which is exactly the defect B-7 exists to fix.
+# The migration hardcodes its own copy on purpose (a migration must not import app
+# code that will drift under it), so the duplication is deliberate, not an oversight.
+#
+# SELFKNOT_UNIT IS DELIBERATELY ABSENT. It exists in the enum above but NOT in the
+# production `artifacttype` type — migration 0007 is written and NOT applied, blocked
+# on an operator ruling (journal 2026-08-01, open item #5). Naming it here would emit
+# a label the database does not have and error the query. Add it here and to 0006's
+# predicate in the same change as 0007, or not at all.
+UNIT_ARTIFACT_TYPES = (
+    ArtifactType.POWERVERIFY_UNIT,
+    ArtifactType.WITNESSMARK_UNIT,
+    ArtifactType.VITNI_UNIT,
+)
+
+
 class Artifact(Base):
     __tablename__ = "artifacts"
 

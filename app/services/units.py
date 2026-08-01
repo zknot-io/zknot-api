@@ -21,7 +21,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models.artifact import Artifact, ArtifactType
+from app.models.artifact import Artifact, ArtifactType, UNIT_ARTIFACT_TYPES
 from app.models.chain import ChainEntry
 from app.schemas.artifact import ArtifactIngest
 from app.services.trust_anchor import ensure_anchored
@@ -34,6 +34,11 @@ MANUFACTURER_KEY_ID = "ZKNOT-MFG-001"
 MANUFACTURER_PUBKEY = (
     "04zknot-manufacturer-key-rev1-placeholder-replace-when-pat-019-filed"
 )
+
+
+def _type_name(artifact_type) -> str:
+    """Enum-or-string → the wire name, for error messages."""
+    return str(getattr(artifact_type, "value", artifact_type))
 
 
 def _provisioning_salt() -> bytes:
@@ -108,8 +113,8 @@ def provision_unit(
     serial_number: str,
     batch_id: str,
     manufacture_date: date,
+    artifact_type: ArtifactType,
     build_notes: str = "",
-    artifact_type: ArtifactType = ArtifactType.POWERVERIFY_UNIT,
     public_key: str | None = None,
     signature: str | None = None,
     signed_at: datetime | None = None,
@@ -127,20 +132,44 @@ def provision_unit(
         the placeholder MANUFACTURER_PUBKEY (see CHANGELOG 'Known issues'). Left
         exactly as-is; a real manufacturer key (Rev 2) fixes it deliberately.
 
-    Idempotent on (serial_number, artifact_type): re-calling with the same SN + type
-    returns the existing artifact. The artifact_type in the filter keeps WM and PV
-    serials in separate namespaces so a WM and PV serial can never collide.
+    `artifact_type` is REQUIRED — DECISION-ARTIFACT-TYPE-001 B-5. There is no correct
+    default for a value that names a product line, and on the device-signed path a
+    wrong one writes an immutable, ECDSA-verified birth record under the wrong line
+    and anchors the device key under the wrong product.
+
+    Idempotent on serial_number ALONE — B-7. Re-calling with the same SN and the same
+    type returns the existing artifact; the same SN under a DIFFERENT type is a 409
+    naming the registered type, not a second birth record. One device has exactly one
+    birth record regardless of type (REGISTER-IDENTITY-NAMESPACES-001), which is also
+    what migration 0006's partial unique index enforces at the database — the lookup
+    and the constraint must agree, or a mismatch surfaces as an IntegrityError 500
+    instead of an honest 409.
     """
-    # Idempotency: device_id IS the serial number for unit artifacts
+    # Idempotency: device_id IS the serial number for unit artifacts.
+    #
+    # Keyed on device_id ALONE, deliberately — matching 0006's index. Filtering on
+    # (device_id, artifact_type) would miss an existing record of a different type,
+    # proceed to INSERT, and take the unique violation as a 500.
     existing = (
         db.query(Artifact)
-        .filter(
-            Artifact.device_id == serial_number,
-            Artifact.artifact_type == artifact_type,
-        )
+        .filter(Artifact.device_id == serial_number)
+        .filter(Artifact.artifact_type.in_(UNIT_ARTIFACT_TYPES))
         .first()
     )
     if existing:
+        if existing.artifact_type != artifact_type:
+            # Returning the mismatched record silently would be worse than either
+            # the duplicate or the 500 — the caller would believe it provisioned
+            # the type it asked for.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Device {serial_number} already has a birth record of type "
+                    f"{_type_name(existing.artifact_type)}; refusing to mint a second "
+                    f"one as {_type_name(artifact_type)}. One device has exactly one "
+                    f"birth record."
+                ),
+            )
         from app.services.chain import get_entry_by_artifact_id
         chain_entry = get_entry_by_artifact_id(db, existing.artifact_id)
         return existing, chain_entry
