@@ -6,13 +6,19 @@ because provision_unit() writes no identity_tier and the deployed verifier.js de
 a null tier to the weakest rung.
 
 Vocabulary is the DEPLOYED verifier.js TIER_VOCAB (CLAUDE.md: never paraphrase tiers).
-Recognised keys there are exactly "SELF-ASSERTED", "registry-asserted" and "REGISTERED".
 "CA-ATTESTED" is deliberately absent and must never be emitted.
+
+2026-08-01: REGISTERED is no longer the automatic answer for any device-signed
+anchored record. It now requires membership of HARDENED_ARTIFACT_TYPES; everything
+else lands on KEY-REGISTERED, which says the KEY is on file and withholds any claim
+about the DEVICE. Operator-ruled: WITNESSMARK_UNIT (Ostensor) only. VITNI_UNIT is
+deliberately NOT hardened yet — it is promoted when its hardening ships, not before.
 """
 from datetime import date
 
 import pytest
 
+from app.models.artifact import ArtifactType
 from app.models.trusted_key import TrustedKey
 from app.services.trust_anchor import normalize_public_key
 from tests.test_units import _device_sign, _PROV_HEADERS
@@ -21,9 +27,16 @@ from tests.test_units import _device_sign, _PROV_HEADERS
 BATCH = "VITNI-PILOT-001"
 MFG = date(2026, 7, 26)
 
-# The three tiers the deployed verifier will render. Anything outside this set falls to
+# The tiers the deployed verifier will render. Anything outside this set falls to
 # TIER_DEFAULT ("UNVERIFIED"), so emitting one would be worse than emitting nothing.
-DEPLOYED_TIER_VOCAB = {"SELF-ASSERTED", "registry-asserted", "REGISTERED"}
+#
+# THIS SET TRACKS PRODUCTION, NOT THE REPO. Do not add a tier here until it is live
+# at https://verifyknot.io/verifier.js — that ordering is the entire guard. Adding a
+# key ahead of its deploy makes this test pass while the /v/ page renders UNVERIFIED.
+# KEY-REGISTERED added after verifier commit b5e0e91 was deployed and verified.
+DEPLOYED_TIER_VOCAB = {
+    "SELF-ASSERTED", "registry-asserted", "KEY-REGISTERED", "REGISTERED",
+}
 
 
 # SERIALS HERE ARE INCIDENTAL. These tests are about tier DERIVATION, not about the
@@ -52,12 +65,13 @@ def _provision(client, serial, artifact_type="VITNI_UNIT"):
 
 class TestDerivedIdentityTier:
 
-    def test_device_signed_unit_reads_registered(self, client):
-        """The whole point. A device-signed, anchored, verifying birth record is
-        REGISTERED — which is the ratified ceiling (D-VDC-3), reached at last."""
-        code, _ = _provision(client, "WM-9004")
+    def test_device_signed_unit_reads_key_registered_by_default(self, client):
+        """A device-signed, anchored, verifying birth record reaches the ladder — but
+        an UNHARDENED product stops at KEY-REGISTERED. Was REGISTERED until 2026-08-01;
+        that was the over-claim, because nothing had checked the device."""
+        code, _ = _provision(client, "WM-9004")           # defaults to VITNI_UNIT
         v = client.get(f"/v1/verify/{code}").json()
-        assert v["identity_tier"] == "REGISTERED"
+        assert v["identity_tier"] == "KEY-REGISTERED"
         # and it agrees with the booleans it is derived from
         assert v["signature_valid"] is True
         assert v["key_anchored"] is True
@@ -68,7 +82,7 @@ class TestDerivedIdentityTier:
         written. A stored tier could not do this — it would keep asserting
         registration for a key ZKNOT has withdrawn."""
         code, pub = _provision(client, "WM-9003")
-        assert client.get(f"/v1/verify/{code}").json()["identity_tier"] == "REGISTERED"
+        assert client.get(f"/v1/verify/{code}").json()["identity_tier"] == "KEY-REGISTERED"
 
         from app.database import get_db
         from app.main import app
@@ -107,7 +121,7 @@ class TestDerivedIdentityTier:
         )
         assert resp.status_code == 201, resp.text
         v = client.get(f"/v1/verify/{resp.json()['short_code']}").json()
-        assert v["identity_tier"] == "REGISTERED"
+        assert v["identity_tier"] == "KEY-REGISTERED"
 
     def test_never_emits_a_tier_the_deployed_verifier_cannot_render(self, client):
         """CA-ATTESTED is gated product-wide and is absent from the deployed
@@ -123,6 +137,25 @@ class TestDerivedIdentityTier:
         not Vitni-only — it is why the Ostensor thread's §10 rail blocker clears."""
         code, _ = _provision(client, "WM-0009", artifact_type="WITNESSMARK_UNIT")
         assert client.get(f"/v1/verify/{code}").json()["identity_tier"] == "REGISTERED"
+
+    def test_hardened_allowlist_is_ostensor_only(self, client):
+        """Pins the 2026-08-01 ruling so widening it is a deliberate act with a diff,
+        never a side effect. VITNI_UNIT is absent ON PURPOSE — it is promoted when its
+        hardening actually ships. Adding a type here upgrades what the rail claims
+        about real hardware, so it belongs in a commit someone signed for."""
+        from app.routers.verify import HARDENED_ARTIFACT_TYPES
+        assert HARDENED_ARTIFACT_TYPES == {ArtifactType.WITNESSMARK_UNIT}
+        assert ArtifactType.VITNI_UNIT not in HARDENED_ARTIFACT_TYPES
+
+    def test_unhardened_product_cannot_reach_registered(self, client):
+        """The fail-closed property, stated as a test. An article whose type is not on
+        the allowlist NEVER reads REGISTERED, however good its signature and anchor —
+        which is the whole correction. A forgotten denylist over-claims silently; this
+        under-claims loudly instead."""
+        code, _ = _provision(client, "WM-9007", artifact_type="POWERVERIFY_UNIT")
+        v = client.get(f"/v1/verify/{code}").json()
+        assert v["verified"] is True and v["key_anchored"] is True
+        assert v["identity_tier"] == "KEY-REGISTERED"
 
     def test_trustseal_registry_asserted_is_not_overwritten(self, client):
         """A stored tier wins. TrustSeal records are signed by the SERVER's registry

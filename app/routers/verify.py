@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.artifact import ArtifactType
 from app.schemas.verify import VerifyResponse, ChainVerifyResponse
 from app.services.attestation import lookup_by_short_code, lookup_by_artifact_id
 from app.services.chain import verify_chain_integrity
@@ -32,6 +33,26 @@ from app.services.record_binding import derive_identity_binding
 from app.services.trust_anchor import is_anchored
 
 router = APIRouter(prefix="/v1", tags=["verify"])
+
+
+# Products whose hardware assurance has been established and which therefore earn
+# the full REGISTERED tier. An ALLOWLIST, deliberately: anything not named here
+# falls to KEY-REGISTERED, so a new SKU earns the weaker rung by default and must
+# be promoted on purpose. The failure direction matters — a forgotten denylist
+# over-claims silently, a forgotten allowlist under-claims loudly.
+#
+# Keyed on artifact_type rather than the trust anchor's `product` because
+# artifact_type is returned by this endpoint and `product` is not: blast radius
+# is therefore VERIFIABLE against live records from outside, not merely asserted.
+# Both are server-written (unit records are minted only by
+# POST /v1/units/provision, and /attest refuses UNIT_ARTIFACT_TYPES), so neither
+# is caller-controlled.
+#
+# WITNESSMARK_UNIT only, operator-ruled 2026-08-01. VITNI_UNIT is deliberately
+# ABSENT: it is not in the production enum, nothing can be provisioned as one,
+# and it should be added here when its hardening actually ships rather than in
+# advance of it.
+HARDENED_ARTIFACT_TYPES = frozenset({ArtifactType.WITNESSMARK_UNIT})
 
 
 def _identity_tier(artifact, *, signature_valid: bool, anchored: bool):
@@ -82,6 +103,18 @@ def _identity_tier(artifact, *, signature_valid: bool, anchored: bool):
     the name of a state this endpoint already computes and already returns as
     two separate booleans.
 
+    KEY-REGISTERED (added 2026-08-01) sits between registry-asserted and
+    REGISTERED, and its deployed entry reads, verbatim:
+
+        proves: "The KEY that signed this is on file in the ZKNOT registry and
+                 was generated inside a secure element it has never left. The
+                 registry vouches for the key."
+        does_not_prove: "That ZKNOT vouches for the DEVICE holding it."
+
+    That is the honest ceiling for an article whose firmware the owner is invited
+    to replace. REGISTERED now requires membership of HARDENED_ARTIFACT_TYPES on
+    top of the two booleans; everything else device-signed lands here.
+
     CA-ATTESTED is never returned. It is gated product-wide until the X.509 SOP
     is live, and the deployed verifier deliberately does not carry it — an
     incoming CA-ATTESTED falls to TIER_DEFAULT and renders as UNVERIFIED.
@@ -105,7 +138,22 @@ def _identity_tier(artifact, *, signature_valid: bool, anchored: bool):
     # Both legs required. Anchored-but-unverifiable is not a registered device,
     # it is a broken record, and the weakest honest tier is the right answer.
     # A revoked key reports anchored=False and correctly falls back here too.
-    return "REGISTERED" if (signature_valid and anchored) else "SELF-ASSERTED"
+    if not (signature_valid and anchored):
+        return "SELF-ASSERTED"
+
+    # HARDENED gate. Until 2026-08-01 this returned REGISTERED for ANY
+    # device-signed anchored record, with no discriminator of any kind — so a
+    # hardened Ostensor and a deliberately-open SelfKnot presented identically.
+    # The rail was vouching for the DEVICE when all it had checked was the KEY.
+    # FINDING-SELFKNOT-CONTAINMENT-001 §3.
+    #
+    # KEY-REGISTERED says exactly what is true of an open article: the key is on
+    # file and generated in a secure element, and ZKNOT says nothing about the
+    # machine around it. Vocabulary is the DEPLOYED verifier.js (CLAUDE.md), and
+    # it MUST ship there before this line can emit it — an unrecognised tier
+    # falls to TIER_DEFAULT and renders "UNVERIFIED", which is worse than the
+    # over-claim being fixed.
+    return "REGISTERED" if artifact.artifact_type in HARDENED_ARTIFACT_TYPES else "KEY-REGISTERED"
 
 
 def build_verify_response(artifact, chain_entry, db) -> VerifyResponse:
