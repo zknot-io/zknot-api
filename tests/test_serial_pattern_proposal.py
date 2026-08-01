@@ -105,3 +105,88 @@ def test_the_open_gaps_are_recorded_not_silently_passing():
     assert not re.match(BRANCH, "OS-0003")
     assert not re.match(CURRENT, "VT-A-000005")
     assert re.match(BRANCH, "VT-A-000005")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SELFKNOT — added 2026-08-01. PROPOSAL ONLY, NOT APPLIED, AND HERE IS WHY.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# SelfKnot cannot be provisioned today: the deployed pattern rejects every
+# identifier the six built articles carry, so no SelfKnot has ever reached the
+# rail. Migration 0007 adds SELFKNOT_UNIT to the enum, and app/models/artifact.py
+# carries it — but the API boundary still refuses the serial, which is the last
+# gate.
+#
+# THIS IS NOT APPLIED TO app/schemas/units.py, DELIBERATELY.
+#
+# REGISTER-IDENTITY-NAMESPACES-001 §6 is RULED and in force, and supersedes the
+# widen-the-pattern approach BY NAME. A VT-A-\d{6} hunk was added to that field
+# and then REMOVED for exactly this reason. Adding ATT-SR1-\d{4} would be the same
+# act against the same ruling.
+#
+# The schema also states the bar directly: "Anything added here must exist in a
+# decision trail first; a prefix that appears only in a regex is a class nobody
+# agreed to." ATT-SR1 has a build ledger and a D-D *recommendation* to keep it as
+# a build-rev. A recommendation in a thread-close journal is not a ruling.
+#
+# So this records the candidates and their consequences, and stops. Ruling it is
+# an operator act.
+SELFKNOT_IN_LEDGER = [f"ATT-SR1-{n:04d}" for n in range(1, 7)]   # the six built articles
+
+# Candidate A — admit the serials that physically exist, unchanged.
+SK_CANDIDATE_A = r"^(PV\d+-\d{5}|WM-\d{4,5}|ATT-SR1-\d{4})$"
+
+# Candidate B — a SelfKnot-branded prefix, requiring the six articles to be
+# RE-SERIALISED and their labels reprinted. Six labels is cheap; two truths for
+# one physical article is not (CLAUDE.md Naming, and the WM- precedent).
+SK_CANDIDATE_B = r"^(PV\d+-\d{5}|WM-\d{4,5}|SK-\d{4,5})$"
+
+
+def test_selfknot_is_blocked_by_the_deployed_pattern_today():
+    """The gate, stated as a test. This is why no SelfKnot is on the rail."""
+    for s in SELFKNOT_IN_LEDGER:
+        assert not re.match(CURRENT, s), f"{s} unexpectedly accepted"
+    assert not re.match(CURRENT, "01232C48E185C4B8EE")   # the raw chip serial
+    assert not re.match(CURRENT, "SK-0002")
+
+
+def test_candidate_a_admits_exactly_the_built_articles():
+    """Candidate A accepts the six serials already printed on hardware, and does not
+    quietly admit the chip serial, which is a different namespace."""
+    for s in SELFKNOT_IN_LEDGER:
+        assert re.match(SK_CANDIDATE_A, s)
+    assert not re.match(SK_CANDIDATE_A, "01232C48E185C4B8EE")
+    assert not re.match(SK_CANDIDATE_A, "ATT-SR1-00007")     # 5 digits, not 4
+    assert not re.match(SK_CANDIDATE_A, "ATT-SR2-0001")      # a different build rev
+
+
+def test_both_candidates_preserve_every_production_serial():
+    """Non-negotiable whichever is ruled: nothing already provisioned may stop
+    validating. Same constraint the D-A candidates were held to."""
+    in_production = ["PV1-00001", "PV1-00002", "PV1-00003", "PV1-00004", "PV1-00005",
+                     "WM-0001", "WM-0002"]
+    for pat in (SK_CANDIDATE_A, SK_CANDIDATE_B):
+        assert [s for s in in_production if not re.match(pat, s)] == []
+
+
+def test_candidate_b_would_orphan_every_printed_label():
+    """The cost of the SK- prefix, made explicit rather than discovered later: the
+    six labels printed 2026-08-01 all carry ATT-SR1-####, and Candidate B rejects
+    every one of them."""
+    assert [s for s in SELFKNOT_IN_LEDGER if re.match(SK_CANDIDATE_B, s)] == []
+
+
+def test_the_ruling_conflict_is_recorded_not_silently_resolved():
+    """Guards against someone applying a candidate without a ruling.
+
+    If SK_CANDIDATE_A (or any SelfKnot prefix) appears in the real schema while
+    REGISTER-IDENTITY-NAMESPACES-001 §6 still supersedes widening, this fails and
+    the decision trail has to catch up with the code.
+    """
+    from app.schemas.units import ProvisionRequest
+    live = ProvisionRequest.model_fields["serial_number"].metadata
+    live_pattern = next((m.pattern for m in live if hasattr(m, "pattern")), "")
+    assert "ATT-SR1" not in live_pattern and "SK-" not in live_pattern, (
+        "a SelfKnot prefix reached app/schemas/units.py — if that was ruled, update "
+        "this test and cite the ruling; if it was not, revert it"
+    )

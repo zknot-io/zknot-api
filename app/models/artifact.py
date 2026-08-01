@@ -13,6 +13,7 @@ class ArtifactType(str, enum.Enum):
     DEV_SIGN = "DEV_SIGN"  # Software dev-key record (rail bootstrap; SELF-ASSERTED, no presence claim)
     WITNESSMARK_UNIT = "WITNESSMARK_UNIT"  # Device-signed WitnessMark birth record (real ECDSA via OPTIGA)
     VITNI_UNIT = "VITNI_UNIT"  # Device-signed Vitni birth record (ECDSA via ATECC608B, D1-gated)
+    SELFKNOT_UNIT = "SELFKNOT_UNIT"  # Device-signed SelfKnot birth record (ECDSA via ATECC608B, open firmware)
     # VITNI_UNIT is its own type on purpose. Idempotency for unit artifacts is keyed on
     # (serial_number, artifact_type), which is what keeps WM and PV serials in separate
     # namespaces so they can never collide. Filing a Vitni under POWERVERIFY_UNIT or
