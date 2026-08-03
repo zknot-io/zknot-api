@@ -147,6 +147,25 @@ class TestDerivedIdentityTier:
         assert HARDENED_ARTIFACT_TYPES == {ArtifactType.WITNESSMARK_UNIT}
         assert ArtifactType.VITNI_UNIT not in HARDENED_ARTIFACT_TYPES
 
+    def test_selfknot_unit_never_hardened(self):
+        """DECISION-ARTIFACT-TYPE-002 A-3, RULED 2026-08-03: SELFKNOT_UNIT is
+        PERMANENTLY excluded from HARDENED_ARTIFACT_TYPES.
+
+        A-3 names this test by filename and function name and says the exclusion is
+        "enforced by a test, not by memory". It did not exist when A-3 was ruled — the
+        ruling cited an enforcement mechanism that was never built, which is the same
+        defect class as a plan gate that cannot run reading as passed. Written here so
+        the citation has a referent.
+
+        Why permanent rather than "not yet": SelfKnot's proposition is open,
+        user-replaceable firmware. There is no future hardening that makes a $59
+        deliberately-open article REGISTERED without changing what the product IS, so
+        this is not a promotion waiting to happen. A maintainer adding types here "for
+        consistency" would silently upgrade what the rail claims about the weakest SKU
+        — objection 4 of that document, stated as an assertion instead of a worry."""
+        from app.routers.verify import HARDENED_ARTIFACT_TYPES
+        assert ArtifactType.SELFKNOT_UNIT not in HARDENED_ARTIFACT_TYPES
+
     def test_unhardened_product_cannot_reach_registered(self, client):
         """The fail-closed property, stated as a test. An article whose type is not on
         the allowlist NEVER reads REGISTERED, however good its signature and anchor —
