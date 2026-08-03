@@ -5,11 +5,48 @@ These are higher-level workflow shapes; under the hood the provisioning
 endpoint creates a unit birth-record artifact — of the artifact_type the caller
 names, which is REQUIRED — via the existing attest pipeline.
 """
-from pydantic import BaseModel, Field, EmailStr
-from typing import Optional, Dict, Any
+from pydantic import BaseModel, Field, EmailStr, BeforeValidator
+from typing import Annotated, Optional, Dict, Any
 from datetime import datetime, date
 
 from app.models.artifact import ArtifactType
+
+
+# Crockford base32, per REGISTER-IDENTITY-NAMESPACES-001 §2 (SIGNED 2026-08-03):
+# 0123456789ABCDEFGHJKMNPQRSTVWXYZ — I, L, O and U are excluded. Written as ranges,
+# machine-checked against that alphabet: zero Crockford characters rejected, zero
+# non-Crockford characters admitted.
+_CROCKFORD = "[0-9A-HJKMNP-TV-Z]"
+UNIT_IDENTITY_RE = (
+    rf"ZKU-{_CROCKFORD}{{4}}-{_CROCKFORD}{{4}}-{_CROCKFORD}{{4}}"
+)
+
+
+def _canonicalize_serial(v):
+    """Trim and upper-case a unit identity. NOTHING ELSE.
+
+    §2 rules the canonical form is upper, so a caller sending `zku-…` is sending a
+    valid identity in a non-canonical case and gets normalised rather than refused.
+
+    IT DELIBERATELY DOES NOT DO CROCKFORD SUBSTITUTION (I/L -> 1, O -> 0). Crockford's
+    error-absorbing decode belongs on the LOOKUP path — §2 says "input is normalized
+    before lookup", and lookup is where a human is retyping a code off a label. This is
+    the WRITE path, where silently rewriting one identity into a different one would mint
+    a permanent record under a string the caller never sent. A malformed identity must
+    fail the pattern loudly instead.
+
+    ORDERING MATTERS AND IS LOAD-BEARING. This runs BEFORE the pattern and therefore
+    before `provision_challenge_string()` interpolates the serial into the bytes the
+    device signs (`services/units.py:92-99`). So the device MUST sign the CANONICAL
+    UPPER form. A unit that signs `zku-…` will produce a signature over different bytes
+    than the server reconstructs and will fail verification — correctly, but with a
+    crypto error rather than a format one. The bench signer mirrors this string
+    byte-for-byte; canonical case is part of "byte-for-byte".
+    """
+    return v.strip().upper() if isinstance(v, str) else v
+
+
+UnitSerial = Annotated[str, BeforeValidator(_canonicalize_serial)]
 
 
 class ProvisionRequest(BaseModel):
@@ -21,11 +58,11 @@ class ProvisionRequest(BaseModel):
       - Device-signed WitnessMark (public_key + signature present): the unit's OPTIGA
         signs the canonical provision challenge; flows through the normal ECDSA path.
     """
-    serial_number: str = Field(
-        ..., pattern=r"^(PV\d+-\d{5}|WM-\d{4,5})$",
+    serial_number: UnitSerial = Field(
+        ..., pattern=rf"^(PV\d+-\d{{5}}|WM-\d{{4,5}}|{UNIT_IDENTITY_RE})$",
         description=(
-            "e.g. PV1-00001 (PowerVerify), WM-0001 (WitnessMark) — "
-            "printed on the back-of-board label"
+            "ZKU-XXXX-XXXX-XXXX (unit identity, Crockford base32) — or legacy "
+            "PV1-00001 / WM-0001. Case-insensitive on input; stored canonical upper."
         )
     )
     # This pattern is the ONLY place the device-id shape is enforced at the API boundary,
@@ -43,16 +80,22 @@ class ProvisionRequest(BaseModel):
     # §6 exists to prevent. Migration 0004 (VITNI_UNIT enum) on the same branch is
     # unaffected and stays -- it is additive and independent of the identifier shape.
     #
-    # THE RULED TARGET IS A NARROWING, NOT THIS LINE:
+    # APPLIED 2026-08-03 (DECISION-UNIT-IDENTITY-FORK-001 IF-4). The comment below is kept
+    # because its reasoning was sound and its premise is what changed.
     #
-    #     UNIT_IDENTITY_RE = r"^ZKU-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$"
+    #     "UNIT_IDENTITY_RE is NOT applied yet, deliberately... no ZKU- identity can be
+    #      minted until the pool table, the vendored generator and the
+    #      UNASSIGNED/ASSIGNED/VOID lifecycle are built."
     #
-    # It is NOT applied yet, deliberately. UNIT_IDENTITY_RE rejects every legacy form
-    # including PV1- and WM-, so applying it before the §5 identity pool exists would
-    # leave the write path unable to accept anything at all -- no ZKU- identity can be
-    # minted until the pool table, the vendored zknot_identity.py generator and the
-    # UNASSIGNED/ASSIGNED/VOID lifecycle are built. Narrow this line as part of that
-    # work, not before it. See ADDENDUM-HANDBACK-API-DB-INTEGRITY-001-A §6.
+    # That was correct while R-6 required a pre-printed pool. IF-3 — signed 2026-08-03 —
+    # SUPERSEDES R-6 IN PART: the pool is deferred to #58 and identities are allocated AT
+    # MINT, guarded by the partial unique index `uq_artifacts_unit_device` (present in
+    # production, verified). Collision is refused by the DATABASE rather than prevented by
+    # a pre-printed list, so the subsystem is no longer on the critical path.
+    #
+    # ZKU- is ADDED here, not substituted: PV1- and WM- remain accepted. R-8 retires them
+    # for new mints and explicitly does not rewrite the chain; removing them from the write
+    # path is a separate, deliberate act and IF-4 does not take it.
     #
     # Anything added here must exist in a decision trail first; a prefix that appears
     # only in a regex is a class nobody agreed to.

@@ -416,6 +416,85 @@ class TestVitniProvision:
             )
             assert resp.status_code == 422, f"{bad} should be rejected, got {resp.status_code}"
 
+    def test_zku_identity_accepted_and_canonicalised(self, client):
+        """DECISION-UNIT-IDENTITY-FORK-001 IF-4, applied 2026-08-03.
+
+        `ZKU-XXXX-XXXX-XXXX` is the ruled unit identity (REGISTER-IDENTITY-NAMESPACES-001
+        R-2, SIGNED 2026-08-03). Until IF-4 the deployed pattern was
+        `^(PV\\d+-\\d{5}|WM-\\d{4,5})$` and every ZKU- shape 422'd at the schema boundary —
+        before artifact_type was read and before the database was reached. That one line
+        was the whole reason no Vitni could carry a rail record.
+
+        Case is normalised, not refused: §2 rules canonical form is upper, so `zku-…` is a
+        valid identity in the wrong case. The device must sign the CANONICAL form, because
+        the validator runs before provision_challenge_string() builds the signed bytes.
+        """
+        from app.schemas.units import ProvisionRequest
+        from datetime import date as _date
+
+        for given, stored in (
+            ("ZKU-ABCD-1234-WXYZ", "ZKU-ABCD-1234-WXYZ"),
+            ("zku-abcd-1234-wxyz", "ZKU-ABCD-1234-WXYZ"),
+            ("  ZKU-ABCD-1234-WXYZ  ", "ZKU-ABCD-1234-WXYZ"),
+        ):
+            req = ProvisionRequest(
+                serial_number=given, batch_id=self.BATCH,
+                manufacture_date=_date(2026, 8, 3), artifact_type="VITNI_UNIT",
+            )
+            assert req.serial_number == stored, f"{given!r} -> {req.serial_number!r}"
+
+    def test_zku_excludes_ilou_and_wrong_lengths(self, client):
+        """Crockford base32 excludes I, L, O and U (§2) — I/L/O because they are the three
+        commonest transcription errors, U so no generated identity spells an obscenity.
+
+        Pinned as a test because the alphabet is written as RANGES
+        (`[0-9A-HJKMNP-TV-Z]`), and a range is exactly the kind of thing a careless edit
+        widens to `[0-9A-Z]` without anyone noticing — which would admit four characters
+        the generator can never produce and make a mistyped identity resolvable.
+
+        NOTE these are schema-level checks, not HTTP: a ZKU- unit cannot be provisioned
+        end-to-end yet. VT-3 still blocks minting (KEY-REGISTERED's deployed text is false
+        of a shipped Vitni), so there is deliberately no live ZKU- record to assert on.
+        """
+        import pytest as _pytest
+        from pydantic import ValidationError
+        from app.schemas.units import ProvisionRequest
+        from datetime import date as _date
+
+        bad = [
+            "ZKU-ABCI-1234-WXYZ", "ZKU-ABCL-1234-WXYZ",   # I and L -> 1
+            "ZKU-ABCO-1234-WXYZ", "ZKU-ABCU-1234-WXYZ",   # O -> 0, U excluded outright
+            "ZKU-ABC-1234-WXYZ", "ZKU-ABCD-1234-WXYZZ",   # wrong group lengths
+            "ZKU-ABCD1234WXYZ",                            # no separators
+            "VT-A-000005",                                 # retired by R-8 / IF-2
+        ]
+        for s in bad:
+            with _pytest.raises(ValidationError):
+                ProvisionRequest(
+                    serial_number=s, batch_id=self.BATCH,
+                    manufacture_date=_date(2026, 8, 3), artifact_type="VITNI_UNIT",
+                )
+
+    def test_legacy_shapes_still_accepted_after_widening(self, client):
+        """IF-4 ADDS ZKU-, it does not substitute it.
+
+        R-8 retires the legacy formats for NEW mints and explicitly does not rewrite the
+        chain; removing PV1-/WM- from the write path is a separate deliberate act that IF-4
+        does not take. If this test ever fails, someone narrowed the pattern without a
+        ruling — and WM- is Ostensor's live production shape, so that would take the
+        shipping product offline.
+        """
+        from app.schemas.units import ProvisionRequest
+        from datetime import date as _date
+
+        for s, stored in (("PV1-00001", "PV1-00001"), ("WM-0001", "WM-0001"),
+                          ("wm-0001", "WM-0001")):
+            req = ProvisionRequest(
+                serial_number=s, batch_id=self.BATCH,
+                manufacture_date=_date(2026, 8, 3), artifact_type="VITNI_UNIT",
+            )
+            assert req.serial_number == stored
+
     def test_vitni_and_powerverify_serials_do_not_collide(self, client):
         """Idempotency is keyed on (serial_number, artifact_type). Same serial under a
         different type must mint a SEPARATE artifact — this is the namespace property

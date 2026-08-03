@@ -86,6 +86,14 @@ def _sign_unit_artifact(
 # Canonical challenge for device-signed unit provisioning. The unit's secure
 # element signs SHA-256(this string). Single source of truth — the bench signer
 # MUST mirror it byte-for-byte (manufacture_date is date.isoformat() = YYYY-MM-DD).
+#
+# CANONICAL CASE IS PART OF "BYTE-FOR-BYTE" (added 2026-08-03, IF-4). `serial_number`
+# reaches here already trimmed and UPPER-CASED — `schemas/units.py` normalises it in a
+# BeforeValidator, which runs before this string is built. So a device that signs
+# `zku-abcd-…` signs different bytes than the server reconstructs and fails verification.
+# Sign the canonical upper form. The normaliser is deliberately case/whitespace only: it
+# does NOT do Crockford I/L->1, O->0 substitution, because on a write path that would mint
+# a permanent record under a string the caller never sent.
 UNIT_PROVISION_CHALLENGE_PREFIX = "ZKNOT-UNIT-PROVISION"
 
 
