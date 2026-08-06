@@ -4,11 +4,45 @@ Revision ID: 0008_signed_at_canonical
 Revises: 0007_selfknot_unit_type
 Create Date: 2026-08-06
 
-DRAFT — NOT RUN against production. Rehearsed against a local postgres:18.3 with a
-faithful copy of the 77 production (artifact_id, challenge_hash, signature,
-signed_at) tuples and their chain_entries; both the success path and the
-deliberate-failure path were exercised. See
-ZKNOT vault OPS/RECON-CHAIN-SUBCHAIN-DEFECTS-001_20260806.md (B4).
+APPLIED TO PRODUCTION 2026-08-06. The "DRAFT — NOT RUN" header this replaces was
+true when written and false by the time anyone read it; corrected rather than left
+standing, because a migration that has run must not describe itself as pending.
+
+Rehearsed first against a local postgres:18.3 with a faithful copy of the 77
+production (artifact_id, challenge_hash, signature, signed_at) tuples and their
+chain_entries; both the success path and the deliberate-failure path were
+exercised. See ZKNOT vault OPS/RECON-CHAIN-SUBCHAIN-DEFECTS-001_20260806.md (B4).
+
+EXECUTION RECORD
+----------------
+Applied under duress. The application half (d8240ba) had already auto-deployed on
+push, and because the Procfile carries no release step the column it selects did
+not exist. Every GET /v1/verify/{code} returned HTTP 500 — the public rail down —
+while /healthz still reported {"status":"ok","db":"ok"}.
+
+  self-report   "0008 VERIFIED: all 77 entry_hash values reproduce byte-for-byte
+                from signed_at_canonical. No hash was altered."
+  independent   chain_entries fingerprint captured BEFORE the migration and
+                re-read after — md5(string_agg(entry_hash ORDER BY position)):
+                  77 | 48f1d03f5c63721612519cb551aa4f5f   (before)
+                  77 | 48f1d03f5c63721612519cb551aa4f5f   (after)
+                A separate read-only query, not the migration's own claim.
+  rail          ZK-7XRY-337 / ZK-2NMF-779 / ZK-42L7-P7F all HTTP 200,
+                verified:true, chain_integrity:true.
+  negative      the same row read under two TimeZones:
+  control         signed_at            Etc/UTC  2026-03-27 09:14:32+00
+                                       Denver   2026-03-27 03:14:32-06    DIFFER
+                  signed_at_canonical  Etc/UTC  2026-03-27T09:14:32+00:00
+                                       Denver   2026-03-27T09:14:32+00:00  IDENTICAL
+                The old hash input moves with a server setting; the new one does
+                not. The defect is closed, proven by the condition that would
+                have triggered it.
+
+STILL OPEN — this migration does not fix it. The Procfile has no `release:` step
+and the app has no startup schema guard, so a deploy can again outrun its
+migration and the app will boot clean and 500 on every query. That is the root
+cause of the outage above, and it needs a ruling rather than a patch: auto-
+migrating on every deploy is not obviously safer than the discipline it replaces.
 
 
 THE DEFECT
