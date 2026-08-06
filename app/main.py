@@ -57,6 +57,14 @@ app.include_router(trustseal.router)
 @app.on_event("startup")
 def on_startup():
     init_db()
+    # Refuse traffic if the database is behind this build. Raising here fails the
+    # deploy and leaves the previous healthy container serving; the alternative,
+    # measured on 2026-08-06, is ~53 minutes of 500s on the public verification
+    # endpoint while /health reports 200. See app/schema_guard.py.
+    from app.database import engine
+    from app.schema_guard import assert_schema_current
+
+    assert_schema_current(engine)
     logger.info("ZKNOT API started — database tables initialized")
 
 
