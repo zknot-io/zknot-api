@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, JSON, Integer, Enum, Text
+from sqlalchemy import Column, String, DateTime, JSON, Integer, Enum, Text, event
 from sqlalchemy.sql import func
 from app.database import Base
 import enum
@@ -62,6 +62,41 @@ class Artifact(Base):
     public_key = Column(Text, nullable=False)
     short_code = Column(String(16), unique=True, index=True, nullable=False)
     signed_at = Column(DateTime(timezone=True), nullable=False)
+    # B4 — the exact string the chain hash commits to, STORED rather than
+    # re-rendered. `entry_hash` covers signed_at as a string, and the previous
+    # code re-derived it with .isoformat() on every read; psycopg renders a
+    # timestamptz in the session's TimeZone, so chain integrity was a function of
+    # a mutable server setting (measured: Etc/UTC vs America/Denver renders the
+    # same row as +00 and -06, and every recomputed hash then differs).
+    #
+    # Populated by the before_insert listener below, never by a caller. Migration
+    # 0008 backfills it with the rendering the existing hashes were already built
+    # from, and REFUSES if that does not reproduce all of them — so no stored
+    # hash changes value, and none of the published chain_prev_hash values move.
+    #
+    # THE RULE THIS INSTANTIATES: anything a hash commits to must be stored,
+    # never rendered.
+    signed_at_canonical = Column(String(64), nullable=False)
     metadata_ = Column("metadata", JSON, nullable=True, default={})
     raw_artifact = Column(JSON, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+@event.listens_for(Artifact, "before_insert")
+def _freeze_signed_at_rendering(_mapper, _connection, target):
+    """Capture the signed_at rendering ONCE, at insert, as data.
+
+    Here rather than at each call site on purpose: artifacts are minted by
+    /v1/attest, provision_unit(), trustseal and the test fixtures, and a rule
+    enforced in four places is a rule that gets forgotten in a fifth. A mapper
+    event cannot be bypassed by adding a new writer.
+
+    Deliberately NOT normalising (no forced UTC, no Z-suffix, no microsecond
+    padding). Normalising here would render new records differently from the 77
+    already on the chain for no gain — the point is to stop re-deriving the
+    string, not to change it. `signed_at` itself is untouched: it is covered by
+    the "canonical-record" identity binding, so altering it would break
+    signatures.
+    """
+    if target.signed_at_canonical is None and target.signed_at is not None:
+        target.signed_at_canonical = target.signed_at.isoformat()

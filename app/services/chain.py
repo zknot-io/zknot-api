@@ -17,6 +17,36 @@ DEFAULT_CHAIN = "default"
 _CHAIN_LOCK_NAMESPACE = 0x5A4B  # 'ZK'
 
 
+def _canonical_signed_at(artifact: Artifact) -> str:
+    """The signed_at string the chain hash commits to — READ, never re-rendered.
+
+    B4. This used to be `artifact.signed_at.isoformat()` at both the append and
+    the verify site. psycopg renders a timestamptz in the session's TimeZone, so
+    the verify site's input depended on a server setting: measured on production
+    2026-08-06, the same row renders `+00` under Etc/UTC and `-06` under
+    America/Denver, and every recomputed hash then differs. Chain integrity was
+    one `SET TimeZone` away from reporting the whole ledger BROKEN, with no code
+    change and no data change.
+
+    Reading the stored column removes the dependency entirely. Migration 0008
+    backfills it with the rendering the existing hashes were already built from
+    and refuses unless all of them reproduce, so nothing published moves.
+
+    Raises rather than falling back to `.isoformat()`. A fallback would silently
+    reinstate the exact bet this removes, and would do it precisely when the
+    column is missing — i.e. when something is already wrong.
+    """
+    canonical = artifact.signed_at_canonical
+    if not canonical:
+        raise ValueError(
+            f"artifact {artifact.artifact_id} has no signed_at_canonical. "
+            f"It is set by the before_insert listener in models/artifact.py and "
+            f"backfilled by migration 0008; a missing value means one of those "
+            f"did not run. Refusing to re-render the hash input."
+        )
+    return canonical
+
+
 def _chain_lock_key(chain_id: str) -> int:
     """Map an arbitrary chain_id to a stable signed int32 advisory-lock key.
 
@@ -117,7 +147,7 @@ def append_to_chain(
         artifact_id=artifact.artifact_id,
         challenge_hash=artifact.challenge_hash,
         signature=artifact.signature,
-        signed_at=artifact.signed_at.isoformat(),
+        signed_at=_canonical_signed_at(artifact),
         prev_hash=prev_hash,
     )
 
@@ -206,7 +236,7 @@ def verify_chain_integrity(db: Session, chain_id: str = DEFAULT_CHAIN) -> Tuple[
             artifact_id=artifact.artifact_id,
             challenge_hash=artifact.challenge_hash,
             signature=artifact.signature,
-            signed_at=artifact.signed_at.isoformat(),
+            signed_at=_canonical_signed_at(artifact),
             prev_hash=entry.prev_hash,
         )
 

@@ -26,7 +26,7 @@ os.environ["ZKNOT_REGISTRY_PRIVKEY_PEM"] = _TEST_PEM
 
 from datetime import timezone
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -37,15 +37,24 @@ from app.main import app
 from app.services.registry_signer import reset_key_cache
 
 
-# SQLite's DATETIME drops tzinfo on read, so a reloaded signed_at becomes naive
-# and chain-hash recomputation (services/chain.py uses signed_at.isoformat())
-# would diverge from the tz-aware value used at append time. Production Postgres
-# (timestamptz) preserves the offset; our registry signer always writes UTC. This
-# load listener re-attaches UTC on read so the test harness mirrors Postgres.
-@event.listens_for(Artifact, "load")
-def _restore_utc_tzinfo(target, _context):
-    if target.signed_at is not None and target.signed_at.tzinfo is None:
-        target.signed_at = target.signed_at.replace(tzinfo=timezone.utc)
+# REMOVED 2026-08-06 (B4, migration 0008). This used to be a `load` listener that
+# re-attached UTC to signed_at on every read, because "SQLite's DATETIME drops
+# tzinfo on read, so a reloaded signed_at becomes naive and chain-hash
+# recomputation (services/chain.py uses signed_at.isoformat()) would diverge from
+# the tz-aware value used at append time."
+#
+# That comment was correct, and it was describing a PRODUCTION defect while fixing
+# it only for the tests. The same hazard existed on Postgres, where psycopg renders
+# a timestamptz in the session's TimeZone — measured on production, the same row
+# renders +00 under Etc/UTC and -06 under America/Denver, so a single SET TimeZone
+# would have reported the entire ledger BROKEN.
+#
+# services/chain.py now hashes from the stored signed_at_canonical column and never
+# re-renders a datetime, so the harness has nothing left to mirror. The crutch is
+# deleted rather than kept, because a workaround that outlives its defect is
+# indistinguishable from a workaround that is still needed.
+#
+# The invariant it used to hide is now asserted directly: tests/test_signed_at_frozen.py.
 
 # Single in-memory DB shared across the connection pool for a test.
 _engine = create_engine(
