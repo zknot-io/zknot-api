@@ -23,7 +23,7 @@ from app.database import get_db
 from app.models.artifact import ArtifactType
 from app.schemas.verify import VerifyResponse, ChainVerifyResponse
 from app.services.attestation import lookup_by_short_code, lookup_by_artifact_id
-from app.services.chain import verify_chain_integrity
+from app.services.chain import verify_chain_integrity, DEFAULT_CHAIN
 from app.services.crypto import (
     InvalidPublicKey,
     InvalidSignatureFormat,
@@ -157,7 +157,25 @@ def _identity_tier(artifact, *, signature_valid: bool, anchored: bool):
 
 
 def build_verify_response(artifact, chain_entry, db) -> VerifyResponse:
-    integrity_ok, _ = verify_chain_integrity(db)
+    # B1 — integrity MUST be computed from the record's OWN chain.
+    #
+    # This previously read `verify_chain_integrity(db)`, which defaults to
+    # DEFAULT_CHAIN. Production already carries two chains (measured 2026-08-06:
+    # `default` 69 rows, `smoketest-G2F-20260714` 8 rows), so this was not a
+    # latent bug waiting on LocalKnot — it was live on the public unauthenticated
+    # endpoint. GET /v1/verify/ZK-TEST-G2F02 returned chain_integrity: true, and
+    # that `true` was computed by walking `default`, a chain that record is not on.
+    #
+    # A published boolean the buyer is invited to rely on was answering a
+    # different question than the one asked. It is not enough for it to be
+    # right by luck when the chains agree.
+    #
+    # `chain_entry` is dereferenced unconditionally further down (position,
+    # prev_hash, entry_hash), so it is not guarded here either — a guard on this
+    # line alone would imply a None case the rest of the function does not
+    # handle. That lookup CAN return None for an artifact with no chain entry;
+    # the resulting AttributeError is pre-existing and is not in scope for B1.
+    integrity_ok, _ = verify_chain_integrity(db, chain_entry.chain_id)
     m = artifact.metadata_ or {}
 
     # API-01 — `verified` used to be the literal True. It asserted nothing and
@@ -210,6 +228,7 @@ def build_verify_response(artifact, chain_entry, db) -> VerifyResponse:
         signature=artifact.signature,
         public_key=artifact.public_key,
         signed_at=artifact.signed_at,
+        chain_id=chain_entry.chain_id,          # B2 — disambiguates chain_position
         chain_position=chain_entry.position,
         chain_prev_hash=chain_entry.prev_hash,
         artifact_hash=chain_entry.entry_hash,   # maps to widget DOM: artifact.artifact_hash
@@ -298,12 +317,28 @@ def verify_by_code(code: str, db: Session = Depends(get_db)):
 
 @router.post("/chain/verify", response_model=ChainVerifyResponse)
 def verify_full_chain(db: Session = Depends(get_db)):
-    """Walk and verify the entire chain. Returns first failure position if found."""
-    ok, failure_pos = verify_chain_integrity(db)
+    """Walk and verify one chain. Returns first failure position if found.
+
+    B1b — `total_entries` must count the chain this response NAMES.
+
+    It was `db.query(ChainEntry).count()`, unfiltered, while `chain_id` was
+    hardcoded to "default". Live production returned
+    `{chain_id: "default", total_entries: 77}` on 2026-08-06 while `default`
+    held 69 rows — 77 being 69 plus the 8 rows of `smoketest-G2F-20260714`.
+    The response named one chain and counted all of them.
+
+    The hardcoded chain_id is left as-is deliberately: making this endpoint
+    take a chain_id parameter is an API surface change and belongs with the
+    sub-chain work (LK-3), not with a defect fix. What is corrected here is the
+    count agreeing with the name it is published under.
+    """
+    ok, failure_pos = verify_chain_integrity(db, DEFAULT_CHAIN)
     from app.models.chain import ChainEntry
     return ChainVerifyResponse(
-        chain_id="default",
-        total_entries=db.query(ChainEntry).count(),
+        chain_id=DEFAULT_CHAIN,
+        total_entries=(
+            db.query(ChainEntry).filter(ChainEntry.chain_id == DEFAULT_CHAIN).count()
+        ),
         verified=ok,
         first_failure_position=failure_pos,
         message="Chain integrity verified." if ok else f"Integrity failure at position {failure_pos}.",

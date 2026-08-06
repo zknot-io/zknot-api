@@ -31,6 +31,19 @@ class VerifyResponse(BaseModel):
     signature: str
     public_key: str
     signed_at: datetime
+    # B2 — chain_position is MEANINGLESS without the chain it indexes.
+    #
+    # Production carries more than one chain (measured 2026-08-06: `default`
+    # 69 rows at positions 0..68, `smoketest-G2F-20260714` 8 rows at 0..7), so
+    # positions 0..7 already exist twice. A consumer receiving
+    # `chain_position: 5` could not tell whether that was position 5 of the rail
+    # or position 5 of one device's private segment — two radically different
+    # claims, presented identically.
+    #
+    # Required rather than Optional: every record that reaches this response has
+    # a chain entry, and a nullable field would let the ambiguity back in for
+    # anything that forgot to set it.
+    chain_id: str
     chain_position: int
     chain_prev_hash: Optional[str]
     artifact_hash: str           # maps to widget DOM field: artifact.artifact_hash

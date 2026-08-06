@@ -109,11 +109,10 @@ def _two_populated_chains(db):
     return sub, sub_code
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B1: verify.py:160 calls verify_chain_integrity(db) with no chain_id, "
-           "so it always walks DEFAULT_CHAIN regardless of the record's own chain",
-)
+# B1 FIXED 2026-08-06 — build_verify_response now passes chain_entry.chain_id.
+# xfail marker removed per this file's own instruction: strict mode turns a fix
+# into a suite failure until the marker goes, so that the audit cannot rot into
+# a silent pass. The assertions are UNCHANGED.
 def test_b1_integrity_is_computed_from_the_records_own_chain(db_session, client):
     """A record's published chain_integrity must describe ITS chain."""
     sub, sub_code = _two_populated_chains(db_session)
@@ -131,11 +130,8 @@ def test_b1_integrity_is_computed_from_the_records_own_chain(db_session, client)
     assert resp.json()["chain_integrity"] is False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B1b: POST /v1/chain/verify hardcodes chain_id='default' but computes "
-           "total_entries as db.query(ChainEntry).count() -- unfiltered",
-)
+# B1b FIXED 2026-08-06 — total_entries is now filtered to the chain the response
+# names. The hardcoded chain_id stays; parameterising the endpoint is LK-3 work.
 def test_b1b_chain_verify_total_entries_counts_only_the_named_chain(db_session, client):
     """total_entries must count the chain the response names.
 
@@ -155,11 +151,7 @@ def test_b1b_chain_verify_total_entries_counts_only_the_named_chain(db_session, 
     assert body["total_entries"] == default_rows
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B2: VerifyResponse exposes chain_position but no chain_id, so "
-           "position N of the rail and position N of a sub-chain are identical",
-)
+# B2 FIXED 2026-08-06 — VerifyResponse carries a required chain_id.
 def test_b2_verify_response_carries_chain_id(db_session, client):
     """Without chain_id, chain_position is ambiguous across chains."""
     sub, sub_code = _two_populated_chains(db_session)
