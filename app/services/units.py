@@ -206,6 +206,21 @@ def provision_unit(
 
         # --- Device-signed path: real ECDSA via ingest verification (no bypass) ---
         challenge_hash = provision_challenge_hash(serial_number, batch_id, manufacture_date)
+        # PERSIST THE SIGNED PAYLOAD. Without it the record cannot be verified in a browser:
+        # verifier.js deliberately does NOT trust the server's `verified` boolean — it
+        # reproduces the check locally, which needs the exact bytes whose SHA-256 is
+        # challenge_hash. Absent the field it returns "The record does not carry the data
+        # needed to reproduce the check in your browser. No verdict."
+        #
+        # Measured 2026-08-10 across 37 live records: 29 could not be verified in a browser,
+        # including every unit record ever minted. The rail said verified:true the whole time,
+        # which is why this survived — the API was checked and the page never was.
+        #
+        # The value is the CANONICAL CHALLENGE STRING, not a re-derivation at read time:
+        # CLAUDE.md — "anything a hash commits to must be STORED, never RENDERED."
+        challenge_payload = provision_challenge_string(
+            serial_number, batch_id, manufacture_date
+        ).encode("utf-8")
         payload = ArtifactIngest(
             artifact_id=artifact_id,
             artifact_type=artifact_type,
@@ -220,6 +235,7 @@ def provision_unit(
                 "manufacture_date": manufacture_date.isoformat(),
                 "build_notes": build_notes,
                 "provision_method": "device-signed",
+                "signed_payload_hex": challenge_payload.hex(),
             },
         )
         # ingest returns (artifact, chain_entry, already_existed); provision_unit's
