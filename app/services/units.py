@@ -125,6 +125,7 @@ def provision_unit(
     build_notes: str = "",
     public_key: str | None = None,
     signature: str | None = None,
+    mcu_uid: str | None = None,
     signed_at: datetime | None = None,
 ) -> Tuple[Artifact, ChainEntry]:
     """Mint a unit birth-record artifact.
@@ -236,6 +237,8 @@ def provision_unit(
                 "build_notes": build_notes,
                 "provision_method": "device-signed",
                 "signed_payload_hex": challenge_payload.hex(),
+                # Evidence, not an index. See schemas/units.py mcu_uid.
+                **({"mcu_uid": mcu_uid.lower()} if mcu_uid else {}),
             },
         )
         # ingest returns (artifact, chain_entry, already_existed); provision_unit's

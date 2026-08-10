@@ -103,6 +103,26 @@ class ProvisionRequest(BaseModel):
                           description="e.g. BATCH-001")
     manufacture_date: date
     build_notes: Optional[str] = None
+    # STORED FACT, NEVER A LOOKUP KEY. Added 2026-08-10.
+    #
+    # The public key identifies the OPTIGA. This identifies the STM32. An article is both,
+    # and recording the pair at enrolment buys ELEMENT-SWAP DETECTION that cannot be
+    # reconstructed afterwards: if a provisioned element later appears with a different MCU,
+    # fingerprint resolution succeeds while this value mismatches — which is exactly the
+    # substitution `shown == signed` exists to exclude.
+    #
+    # Deliberately NOT the join key. Resolving a device by fingerprint is
+    # self-authenticating: the device can only resolve to the record holding its own key.
+    # Resolving by MCU UID would make the lookup a CLAIM the device makes about which record
+    # to be compared against — an assertion an attacker chooses. Fingerprint collapses lookup
+    # and verification into one operation; this field is evidence, not an index.
+    #
+    # Optional and unvalidated against anything: no backfill, no gate. Written going forward.
+    mcu_uid: Optional[str] = Field(
+        None, max_length=32,
+        description="96-bit MCU UID, 24 hex chars, as read over SWD at enrolment. "
+                    "Stored for element-swap detection. Never used to look a record up.",
+    )
     # REQUIRED — no default. DECISION-ARTIFACT-TYPE-001 B-5, ruled 2026-07-29.
     #
     # This field used to default to POWERVERIFY_UNIT "for backward compatibility"

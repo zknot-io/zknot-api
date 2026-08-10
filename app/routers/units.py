@@ -82,6 +82,7 @@ def provision(req: ProvisionRequest, db: Session = Depends(get_db)):
         public_key=req.public_key,
         signature=req.signature,
         signed_at=req.signed_at,
+        mcu_uid=req.mcu_uid,
     )
 
     qr_url = _short_code_url(artifact.short_code)
@@ -238,3 +239,54 @@ async def puf_verify(short_code: str, photo: UploadFile = File(...),
         confidence=confidence,
         enrolled_at=enrollment.captured_at,
     )
+
+
+# ---------------------------------------------------------------------------
+# DEVICE RESOLUTION BY PRESENTED KEY (public — verifyknot.io/start calls this)
+# ---------------------------------------------------------------------------
+#
+# WHY BY KEY AND NOT BY SERIAL. verifyknot.io/start shipped with the live lookup
+# COMMENTED OUT and a hardcoded table of 19 nine-byte ATECC serials in its place, so an
+# Ostensor could never resolve — measured 2026-08-10, and the reason the attest button
+# did nothing for OPTIGA articles.
+#
+# Restoring it by serial would have been the wrong repair. A serial lookup makes the
+# device ASSERT which record it should be compared against, and an attacker picks that
+# assertion. Resolving by the key the device presents is SELF-AUTHENTICATING: it can only
+# resolve to the record that already contains its key, so lookup and verification are the
+# same operation. There is no wrong record to be pointed at.
+#
+# The MCU UID is deliberately NOT accepted here. It is recorded at provisioning as a
+# stored fact for element-swap detection (see schemas/units.py) and never as an index.
+@router.get("/by-key/{public_key}", tags=["units"])
+def resolve_by_key(public_key: str, db: Session = Depends(get_db)):
+    """Resolve the unit record holding this public key. 404 if no record carries it."""
+    pk = public_key.strip().lower()
+    if not pk or len(pk) > 200 or any(c not in "0123456789abcdef" for c in pk):
+        raise HTTPException(400, "public_key must be hex")
+
+    artifact = (
+        db.query(Artifact)
+        .filter(Artifact.public_key.ilike(pk))
+        .order_by(Artifact.signed_at.asc())
+        .first()
+    )
+    if not artifact:
+        raise HTTPException(404, "No record carries this key")
+
+    md = dict(artifact.metadata_ or {})
+    return {
+        "short_code": artifact.short_code,
+        "device_id": artifact.device_id,
+        "artifact_type": (
+            artifact.artifact_type.value
+            if hasattr(artifact.artifact_type, "value")
+            else str(artifact.artifact_type)
+        ),
+        "public_key": artifact.public_key,
+        # Present only if enrolment recorded it. Absent is normal for anything provisioned
+        # before 2026-08-10 and is NOT an error — it means swap detection is unavailable for
+        # that article, which is a different statement from "the MCU matches".
+        "mcu_uid": md.get("mcu_uid"),
+        "verify_url": _short_code_url(artifact.short_code),
+    }
