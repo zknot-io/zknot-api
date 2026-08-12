@@ -181,3 +181,23 @@ class PufVerifyResponse(BaseModel):
     hamming_distance: int
     confidence: str  # high / medium / low / fail
     enrolled_at: datetime
+
+
+class PassiveUnitRegisterRequest(BaseModel):
+    """Body for `POST /v1/units/register-passive`.
+
+    ZKU- ONLY, deliberately narrower than `ProvisionRequest`. That schema also admits
+    `PV\\d+-\\d{5}` and `WM-\\d{4,5}`, which are legacy forms
+    `REGISTER-IDENTITY-NAMESPACES-001` §6 retired; a new registry-asserted record must not
+    be mintable under a retired namespace, since the whole point of §6's one-time window is
+    that the old formats become unmintable.
+    """
+
+    serial_number: UnitSerial = Field(
+        ..., pattern=rf"^{UNIT_IDENTITY_RE}$",
+        description="ZKU-XXXX-XXXX-XXXX, Crockford base32 (no I/L/O/U). Case-normalised.",
+    )
+    batch: Optional[str] = Field(
+        None, max_length=64,
+        description="Operator batch identifier, e.g. GRAIP-R1. Recorded and signed.",
+    )

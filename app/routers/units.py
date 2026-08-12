@@ -14,18 +14,25 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Header, Response, UploadFile, File
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.artifact import Artifact, ArtifactType
 from app.models.puf import PufRecord
+from app.schemas.artifact import ArtifactResponse
 from app.schemas.units import (
     ProvisionRequest, ProvisionResponse,
     CustomerRegisterRequest, CustomerRegisterResponse,
     PufEnrollResponse, PufVerifyResponse,
+    PassiveUnitRegisterRequest,
 )
 from app.services.units import provision_unit
+from app.services.passive_unit import (
+    register_passive_unit,
+    PassiveUnitError,
+    PassiveUnitTypeConflict,
+)
 from app.services.puf import compute_phash, compare_phashes
 from app.services.chain import get_entry_by_artifact_id
 
@@ -290,3 +297,52 @@ def resolve_by_key(public_key: str, db: Session = Depends(get_db)):
         "mcu_uid": md.get("mcu_uid"),
         "verify_url": _short_code_url(artifact.short_code),
     }
+
+
+@router.post("/register-passive", response_model=ArtifactResponse)
+def register_passive(
+    req: PassiveUnitRegisterRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """Register a PASSIVE unit as a registry-signed birth record.
+
+    For articles with no secure element, which therefore can never sign the provisioning
+    challenge `/units/provision` requires. The registry key signs that this serial was
+    registered, at this time, in this batch — and the serial is inside the signed bytes,
+    so the signature is an assertion about a specific article.
+
+    This does NOT claim the article is genuine. `identity_tier` is `registry-asserted` and
+    `signed_by` is `zknot-registry-v1`; a cloned board with a copied serial resolves
+    identically, and only an article that can sign a challenge closes that.
+
+    Status codes:
+      201 Created — registered and chained
+      200 OK      — this serial already had a record (idempotent; the unique index, not a
+                    check-then-write, is what makes concurrent calls safe)
+    """
+    try:
+        artifact, chain_entry, was_existing = register_passive_unit(
+            db, serial_number=req.serial_number, batch=req.batch
+        )
+    except PassiveUnitTypeConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except PassiveUnitError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    response.status_code = 200 if was_existing else 201
+    if was_existing:
+        response.headers["X-Already-Existed"] = "true"
+    return ArtifactResponse(
+        artifact_id=artifact.artifact_id,
+        artifact_type=artifact.artifact_type,
+        device_id=artifact.device_id,
+        session_id=artifact.session_id,
+        challenge_hash=artifact.challenge_hash,
+        short_code=artifact.short_code,
+        signed_at=artifact.signed_at,
+        chain_position=chain_entry.position,
+        chain_prev_hash=chain_entry.prev_hash,
+        entry_hash=chain_entry.entry_hash,
+        metadata=artifact.metadata_,
+    )
