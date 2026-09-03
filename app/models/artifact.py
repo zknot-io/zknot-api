@@ -14,6 +14,7 @@ class ArtifactType(str, enum.Enum):
     WITNESSMARK_UNIT = "WITNESSMARK_UNIT"  # Device-signed WitnessMark birth record (real ECDSA via OPTIGA)
     VITNI_UNIT = "VITNI_UNIT"  # Device-signed Vitni birth record (ECDSA via ATECC608B, D1-gated)
     SELFKNOT_UNIT = "SELFKNOT_UNIT"  # Device-signed SelfKnot birth record (ECDSA via ATECC608B, open firmware)
+    TREE_OBSERVATION = "TREE_OBSERVATION"  # One visit to one tree (TreeKnot). NOT a unit record — see below.
     # VITNI_UNIT is its own type on purpose. Idempotency for unit artifacts is keyed on
     # (serial_number, artifact_type), which is what keeps WM and PV serials in separate
     # namespaces so they can never collide. Filing a Vitni under POWERVERIFY_UNIT or
@@ -37,11 +38,21 @@ class ArtifactType(str, enum.Enum):
 # The migration hardcodes its own copy on purpose (a migration must not import app
 # code that will drift under it), so the duplication is deliberate, not an oversight.
 #
-# SELFKNOT_UNIT IS DELIBERATELY ABSENT. It exists in the enum above but NOT in the
-# production `artifacttype` type — migration 0007 is written and NOT applied, blocked
-# on an operator ruling (journal 2026-08-01, open item #5). Naming it here would emit
-# a label the database does not have and error the query. Add it here and to 0006's
-# predicate in the same change as 0007, or not at all.
+# SELFKNOT_UNIT IS DELIBERATELY ABSENT, but the reason has changed. It is no longer
+# missing from the database: production is at alembic_version 0008 and the live
+# `artifacttype` type carries all of ZKEY_SIGN, POWER_SESSION, TRUST_SEAL,
+# COMBINED_SESSION, POWERVERIFY_UNIT, DEV_SIGN, WITNESSMARK_UNIT, VITNI_UNIT and
+# SELFKNOT_UNIT (measured 2026-09-03). Migration 0007 IS applied. Whether SelfKnot
+# birth records should be one-per-device is still an operator ruling, and until that
+# is made this list stays as it is — but do not repeat the claim that the value is
+# absent from production, because it is not.
+#
+# TREE_OBSERVATION IS DELIBERATELY ABSENT, AND PERMANENTLY SO. A unit type means one
+# device has exactly ONE record, enforced by 0006's partial unique index. A tree gets
+# MANY observations — that is the entire product. Naming TREE_OBSERVATION here would
+# make the second visit to a tree fail on a unique-index violation, destroying the
+# timeline feature in the one way that looks like a database error rather than a
+# design mistake. It is not a birth record and must never be treated as one.
 UNIT_ARTIFACT_TYPES = (
     ArtifactType.POWERVERIFY_UNIT,
     ArtifactType.WITNESSMARK_UNIT,
