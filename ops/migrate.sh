@@ -112,9 +112,19 @@ else:
         print(f"  NOTE: {len(steps)} migrations, not one. Read every one before confirming.")
 PY2
 echo
-printf "apply %s to PRODUCTION? type the revision to confirm: " "$TARGET"
+# Name the exact string. The screen shows TWO revisions by this point — where
+# production is, and where it is going — and "type the revision" is ambiguous
+# between them. Measured: the current revision was typed, and refused.
+echo "This will ALTER the production database. It cannot be undone:"
+echo "PostgreSQL has no DROP VALUE for an enum."
+echo
+printf "To apply, type exactly:  %s\n" "$TARGET"
+printf "> "
 read -r CONFIRM
-[ "$CONFIRM" = "$TARGET" ] || { echo "not confirmed — nothing applied" >&2; exit 2; }
+if [ "$CONFIRM" != "$TARGET" ]; then
+  echo "nothing applied — got '$CONFIRM', expected '$TARGET'" >&2
+  exit 2
+fi
 
 python3 -m alembic upgrade "$TARGET"
 
