@@ -19,7 +19,19 @@ class Settings(BaseSettings):
     zknot_registry_privkey_pem: str = ""
     # Stored as a plain comma-separated string in Railway env vars
     # e.g. CORS_ORIGINS_STR=https://zknot.io,https://verifyknot.io
-    cors_origins_str: str = "https://zknot.io,https://www.zknot.io,https://verifyknot.io,http://localhost:3000,http://localhost:8000"
+    #
+    # treeknot.io is here because the field app POSTs /v1/tree-observations from
+    # the browser. Without it the preflight answers 400 with no
+    # access-control-allow-origin and the browser blocks the request — which
+    # presents to a person in a field as "nothing happened", with no error the
+    # app can show. Note the DEFAULT is what production uses unless
+    # CORS_ORIGINS_STR is set in Railway; if it IS set there, this line changes
+    # nothing and the origin must be added there too.
+    cors_origins_str: str = (
+        "https://zknot.io,https://www.zknot.io,https://verifyknot.io,"
+        "https://treeknot.io,https://www.treeknot.io,"
+        "http://localhost:3000,http://localhost:8000"
+    )
 
     @property
     def cors_origins(self) -> List[str]:
