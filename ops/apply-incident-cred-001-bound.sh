@@ -105,6 +105,19 @@ psql -v ON_ERROR_STOP=1 -q -X -A -F'|' \
 \set ON_ERROR_STOP on
 BEGIN;
 
+-- psql interpolates a colon-variable in ordinary SQL, but NOT inside a
+-- dollar-quoted body: that text reaches the server verbatim, and the server has
+-- no idea what a leading colon means. Measured 2026-09-05 against production --
+-- it failed with `syntax error at or near ":"` and the transaction rolled back,
+-- writing nothing. Values reach the DO block as transaction-local settings
+-- instead, which survive into it because they live in the session, not the text.
+-- Keep this comment free of both, so a grep for either finds only real code.
+SET LOCAL zk.key_id    = :'key_id';
+SET LOCAL zk.bchain    = :'bchain';
+SET LOCAL zk.bpos      = :'bpos';
+SET LOCAL zk.exp_below = :'exp_below';
+SET LOCAL zk.exp_above = :'exp_above';
+
 UPDATE trusted_keys
    SET bound_chain_id = :'bchain',
        bound_position = :'bpos'::int,
@@ -114,6 +127,11 @@ UPDATE trusted_keys
 -- ---- self-checks. Any failure raises, which rolls the whole thing back. ----
 DO $$
 DECLARE
+  k_id      int  := current_setting('zk.key_id')::int;
+  b_chain   text := current_setting('zk.bchain');
+  b_pos     int  := current_setting('zk.bpos')::int;
+  exp_below int  := current_setting('zk.exp_below')::int;
+  exp_above int  := current_setting('zk.exp_above')::int;
   n_bounded int; n_below int; n_above int; got_chain text; got_pos int;
 BEGIN
   SELECT count(*) INTO n_bounded FROM trusted_keys WHERE bound_position IS NOT NULL;
@@ -122,8 +140,8 @@ BEGIN
   END IF;
 
   SELECT bound_chain_id, bound_position INTO got_chain, got_pos
-    FROM trusted_keys WHERE id = :'key_id'::int;
-  IF got_chain IS DISTINCT FROM :'bchain' OR got_pos IS DISTINCT FROM :'bpos'::int THEN
+    FROM trusted_keys WHERE id = k_id;
+  IF got_chain IS DISTINCT FROM b_chain OR got_pos IS DISTINCT FROM b_pos THEN
     RAISE EXCEPTION 'bound did not land: chain=% pos=%', got_chain, got_pos;
   END IF;
 
@@ -135,21 +153,21 @@ BEGIN
            ELSE regexp_replace(lower(btrim(a.public_key)),'^0x','') END AS k
     FROM artifacts a)
   SELECT
-    count(*) FILTER (WHERE ce.chain_id = :'bchain' AND ce.position <= :'bpos'::int),
-    count(*) FILTER (WHERE ce.chain_id <> :'bchain' OR  ce.position >  :'bpos'::int)
+    count(*) FILTER (WHERE ce.chain_id = b_chain AND ce.position <= b_pos),
+    count(*) FILTER (WHERE ce.chain_id <> b_chain OR  ce.position >  b_pos)
   INTO n_below, n_above
   FROM norm n
   JOIN chain_entries ce ON ce.artifact_id = n.artifact_id
   JOIN trusted_keys tk  ON lower(tk.public_key_norm) = n.k
-  WHERE tk.id = :'key_id'::int;
+  WHERE tk.id = k_id;
 
-  IF n_below <> :'exp_below'::int THEN
+  IF n_below <> exp_below THEN
     RAISE EXCEPTION 'records at or below the bound: expected %, got %',
-      :'exp_below'::int, n_below;
+      exp_below, n_below;
   END IF;
-  IF n_above <> :'exp_above'::int THEN
-    RAISE EXCEPTION 'records ABOVE the bound: expected %, got % — a published record would stop verifying. Refusing.',
-      :'exp_above'::int, n_above;
+  IF n_above <> exp_above THEN
+    RAISE EXCEPTION 'records ABOVE the bound: expected %, got % -- a published record would stop verifying. Refusing.',
+      exp_above, n_above;
   END IF;
 
   RAISE NOTICE 'verified: 1 bounded key, % records at or below the bound, % above', n_below, n_above;
