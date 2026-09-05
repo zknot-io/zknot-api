@@ -60,6 +60,16 @@ class TrustedKey(Base):
     added_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
 
+    # INCIDENT-CRED-001 R-2, Option B. Set together or not at all (enforced by
+    # ck_trusted_keys_bound_complete). A bounded key anchors only at or below
+    # bound_position on bound_chain_id; NULL means unbounded, the behaviour
+    # every other key has. The chain id is not decoration: production runs two
+    # chains and both start at position 0, so a bare integer would leave a
+    # bounded key free to sign the low positions of any other chain.
+    bound_chain_id = Column(String(36), nullable=True)
+    bound_position = Column(Integer, nullable=True)
+    bound_reason = Column(Text, nullable=True)
+
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         state = "active" if self.active else "revoked"
         return f"<TrustedKey {self.label} ({self.product}, {state})>"

@@ -32,6 +32,15 @@ class AnchorResult(NamedTuple):
     label: Optional[str] = None
     product: Optional[str] = None
     revoked: bool = False
+    # INCIDENT-CRED-001 R-2. `out_of_bounds` is the third way a lookup can
+    # fail: the key is real and still active, but this record sits outside the
+    # span it was entitled to sign. Distinct from `revoked` on purpose — an
+    # auditor needs to tell "trust withdrawn wholesale" from "trust withdrawn
+    # after position N", and only the second one means a leaked key was used.
+    out_of_bounds: bool = False
+    bound_chain_id: Optional[str] = None
+    bound_position: Optional[int] = None
+    bound_reason: Optional[str] = None
 
 
 class InvalidPublicKeyEncoding(ValueError):
@@ -126,13 +135,35 @@ def ensure_anchored(
     return row
 
 
-def is_anchored(db: Session, public_key: str) -> AnchorResult:
-    """Is this public key one ZKNOT vouches for?
+def is_anchored(
+    db: Session,
+    public_key: str,
+    *,
+    chain_id: Optional[str] = None,
+    position: Optional[int] = None,
+) -> AnchorResult:
+    """Is this public key one ZKNOT vouches for, for THIS record?
 
     Returns AnchorResult(anchored=False) for an unknown key, and
     AnchorResult(anchored=False, revoked=True, ...) for a key we trusted once
     and withdrew. A malformed key is not anchored — it is not an error here,
     because signature verification will reject it anyway with a better message.
+
+    INCIDENT-CRED-001 R-2 — the position bound.
+        A key carrying `bound_chain_id`/`bound_position` is anchored ONLY for
+        records at or below that position on that chain. Every other key is
+        unbounded and takes the original path exactly.
+
+        `chain_id` and `position` describe the record being judged. At verify
+        time they come from its existing chain entry. At write time they are
+        the position the record WOULD take, which is what closes forgery: a new
+        record signed with a bounded key lands above the bound and is refused.
+
+    FAIL CLOSED. If a key is bounded and the caller supplies no position, the
+        key is NOT anchored. The alternative — treating "I did not ask" as "it
+        is fine" — is the silent-pass failure this codebase keeps finding, and
+        here it would hand a leaked key back its unconditional anchor. A caller
+        that legitimately has no position must say so by looking one up.
     """
     try:
         norm = normalize_public_key(public_key)
@@ -147,9 +178,26 @@ def is_anchored(db: Session, public_key: str) -> AnchorResult:
     if row is None:
         return AnchorResult(anchored=False)
 
+    if not row.active:
+        return AnchorResult(anchored=False, label=row.label,
+                            product=row.product, revoked=True)
+
+    bounded = row.bound_chain_id is not None and row.bound_position is not None
+    if not bounded:
+        return AnchorResult(anchored=True, label=row.label, product=row.product)
+
+    within = (
+        chain_id is not None
+        and position is not None
+        and chain_id == row.bound_chain_id
+        and position <= row.bound_position
+    )
     return AnchorResult(
-        anchored=bool(row.active),
+        anchored=within,
         label=row.label,
         product=row.product,
-        revoked=not row.active,
+        out_of_bounds=not within,
+        bound_chain_id=row.bound_chain_id,
+        bound_position=row.bound_position,
+        bound_reason=row.bound_reason,
     )

@@ -21,6 +21,7 @@ from app.schemas.artifact import ArtifactIngest, ArtifactResponse
 from app.services.api_keys import require_api_key
 from app.services.attestation import ingest_artifact
 from app.services.record_binding import binding_required
+from app.services.chain import DEFAULT_CHAIN, get_chain_head
 from app.services.trust_anchor import is_anchored
 
 router = APIRouter(prefix="/v1", tags=["attest"])
@@ -177,11 +178,30 @@ def attest(
     """
     _enforce_attest_boundary(payload, db)
 
-    anchor = is_anchored(db, payload.public_key)
+    # INCIDENT-CRED-001 R-2. Judge the position this record WOULD take, not
+    # the one it has — it has none yet. This is where forgery is actually
+    # closed: a bounded key signing anything new lands above its bound and is
+    # refused before the chain is touched.
+    _head = get_chain_head(db, DEFAULT_CHAIN)
+    _next_position = (_head.position + 1) if _head else 0
+    anchor = is_anchored(
+        db,
+        payload.public_key,
+        chain_id=DEFAULT_CHAIN,
+        position=_next_position,
+    )
     if not anchor.anchored:
         # Deliberately does not echo the key or say whether it was ever known
         # beyond revoked-vs-unknown: enough for a legitimate caller to act on,
         # not a probing oracle for enumerating the anchor.
+        if anchor.out_of_bounds:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "The signing key is bounded and may not append beyond the "
+                    "position it was entitled to sign."
+                ),
+            )
         if anchor.revoked:
             raise HTTPException(
                 status_code=403,
