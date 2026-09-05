@@ -123,6 +123,34 @@ class ProvisionRequest(BaseModel):
         description="96-bit MCU UID, 24 hex chars, as read over SWD at enrolment. "
                     "Stored for element-swap detection. Never used to look a record up.",
     )
+    # MEASURED OPTION BYTES — what makes REGISTERED a reading rather than a label.
+    #
+    # Added 2026-09-05. Until then routers/verify.py granted REGISTERED on artifact_type
+    # alone, and HARDENED_ARTIFACT_TYPES holds exactly one value — WITNESSMARK_UNIT, which
+    # IS Ostensor's frozen type. So every Ostensor enrolled landed at REGISTERED whatever
+    # the silicon actually was: OS-0004 (ob_rdp 0xBB, ob_tzen 0x1) honestly, and an
+    # unhardened Rev-B article (ob_rdp 0xAA, ob_tzen 0x0) falsely, on the public verify
+    # surface, claiming a secure world it does not have.
+    #
+    # Supplied by the provisioning tool from the option bytes it read off the part at
+    # enrolment, in the same session and over the same probe as the identity confirmation.
+    # Optional because omitting them is not an error — it simply means hardening was not
+    # measured, and an unanswerable question resolves to the WEAKER claim
+    # (KEY-REGISTERED), never the stronger one.
+    #
+    # These are evidence, not an index, and they are not a promise: the tier is still
+    # DERIVED at verify time, so recording 0x1/0xBB here does not assert hardening on its
+    # own — it only lets the derivation see a reading instead of a label.
+    ob_tzen: Optional[str] = Field(
+        None, max_length=8,
+        description="TrustZone enable option byte as read at enrolment, e.g. '0x1'. "
+                    "Absent means not measured, which is treated as not hardened.",
+    )
+    ob_rdp: Optional[str] = Field(
+        None, max_length=8,
+        description="Readout protection level byte as read at enrolment, e.g. '0xBB' for "
+                    "RDP Level 1. Absent means not measured, which is treated as not hardened.",
+    )
     # REQUIRED — no default. DECISION-ARTIFACT-TYPE-001 B-5, ruled 2026-07-29.
     #
     # This field used to default to POWERVERIFY_UNIT "for backward compatibility"

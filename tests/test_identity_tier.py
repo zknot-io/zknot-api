@@ -9,10 +9,20 @@ Vocabulary is the DEPLOYED verifier.js TIER_VOCAB (CLAUDE.md: never paraphrase t
 "CA-ATTESTED" is deliberately absent and must never be emitted.
 
 2026-08-01: REGISTERED is no longer the automatic answer for any device-signed
-anchored record. It now requires membership of HARDENED_ARTIFACT_TYPES; everything
+anchored record. It requires membership of HARDENED_ARTIFACT_TYPES; everything
 else lands on KEY-REGISTERED, which says the KEY is on file and withholds any claim
 about the DEVICE. Operator-ruled: WITNESSMARK_UNIT (Ostensor) only. VITNI_UNIT is
 deliberately NOT hardened yet — it is promoted when its hardening ships, not before.
+
+2026-09-05: membership of that set is now NECESSARY BUT NOT SUFFICIENT. The set holds
+one value and that value IS Ostensor's frozen production type, so type-membership alone
+granted REGISTERED to every Ostensor regardless of what its silicon measured — including
+Rev-B articles at ob_tzen 0x0 / ob_rdp 0xAA, which have no secure boot and no TrustZone.
+REGISTERED now additionally requires MEASURED option bytes (TZEN enabled, RDP Level 1)
+carried in the provisioning payload, or membership of the hand-declared
+GRANDFATHERED_HARDENED set for articles enrolled before the field existed. An absent or
+partial reading resolves to KEY-REGISTERED: a tier is a claim, and an unanswerable
+question takes the weaker one.
 """
 from datetime import date
 
@@ -45,7 +55,7 @@ DEPLOYED_TIER_VOCAB = {
 # format and narrows the pattern instead of widening it, so they now use WM-90NN. When
 # the §5 identity pool lands and the pattern narrows to UNIT_IDENTITY_RE, these move
 # again — to minted ZKU- identities drawn from the pool, not to hand-written strings.
-def _provision(client, serial, artifact_type="VITNI_UNIT"):
+def _provision(client, serial, artifact_type="VITNI_UNIT", ob_tzen=None, ob_rdp=None):
     pub, sig = _device_sign(serial, BATCH, MFG)
     resp = client.post(
         "/v1/units/provision",
@@ -56,6 +66,8 @@ def _provision(client, serial, artifact_type="VITNI_UNIT"):
             "artifact_type": artifact_type,
             "public_key": pub,
             "signature": sig,
+            **({"ob_tzen": ob_tzen} if ob_tzen else {}),
+            **({"ob_rdp": ob_rdp} if ob_rdp else {}),
         },
         headers=_PROV_HEADERS,
     )
@@ -132,11 +144,39 @@ class TestDerivedIdentityTier:
         assert tier in DEPLOYED_TIER_VOCAB
         assert tier != "CA-ATTESTED"
 
-    def test_ostensor_unit_reads_registered_too(self, client):
-        """WITNESSMARK_UNIT is Ostensor's live production type (B-3). This change is
-        not Vitni-only — it is why the Ostensor thread's §10 rail blocker clears."""
+    def test_ostensor_unit_needs_MEASURED_hardening_for_registered(self, client):
+        """REWRITTEN 2026-09-05. This test used to assert that a WITNESSMARK_UNIT reads
+        REGISTERED on the strength of its artifact_type alone — and it passed, because
+        that is exactly what the code did. The assertion was wrong, not the code's
+        implementation of it.
+
+        HARDENED_ARTIFACT_TYPES holds one value, WITNESSMARK_UNIT, and that value IS
+        Ostensor's frozen production type. So the old contract granted REGISTERED — "ZKNOT
+        vouches for the DEVICE", and in the product ladder's words "measured firmware
+        signed this" — to every Ostensor ever enrolled, including Rev-B articles measured
+        at ob_tzen 0x0 / ob_rdp 0xAA which run a plain non-secure application with no
+        secure boot at all. A label cannot disagree with its subject, so the check could
+        never fail.
+
+        The tier must follow the reading. Without measured option bytes an Ostensor is
+        KEY-REGISTERED, which is the honest ceiling for an article whose firmware the
+        owner is invited to replace."""
         code, _ = _provision(client, "WM-0009", artifact_type="WITNESSMARK_UNIT")
+        assert client.get(f"/v1/verify/{code}").json()["identity_tier"] == "KEY-REGISTERED"
+
+    def test_measured_hardening_earns_registered(self, client):
+        """The other half: a genuinely hardened article still reaches REGISTERED, so this
+        change withholds a false claim without withholding a true one."""
+        code, _ = _provision(client, "WM-0010", artifact_type="WITNESSMARK_UNIT",
+                             ob_tzen="0x1", ob_rdp="0xBB")
         assert client.get(f"/v1/verify/{code}").json()["identity_tier"] == "REGISTERED"
+
+    def test_half_hardened_does_not_earn_registered(self, client):
+        """TrustZone on but flash still readable is not the hardened state. Both bytes or
+        neither — a partial reading resolves to the weaker claim."""
+        code, _ = _provision(client, "WM-0011", artifact_type="WITNESSMARK_UNIT",
+                             ob_tzen="0x1", ob_rdp="0xAA")
+        assert client.get(f"/v1/verify/{code}").json()["identity_tier"] == "KEY-REGISTERED"
 
     def test_hardened_allowlist_is_ostensor_only(self, client):
         """Pins the 2026-08-01 ruling so widening it is a deliberate act with a diff,

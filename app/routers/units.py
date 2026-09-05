@@ -90,6 +90,8 @@ def provision(req: ProvisionRequest, db: Session = Depends(get_db)):
         signature=req.signature,
         signed_at=req.signed_at,
         mcu_uid=req.mcu_uid,
+        ob_tzen=req.ob_tzen,
+        ob_rdp=req.ob_rdp,
     )
 
     qr_url = _short_code_url(artifact.short_code)

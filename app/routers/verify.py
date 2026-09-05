@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.artifact import ArtifactType
+from app.models.chain import ChainEntry
 from app.schemas.verify import VerifyResponse, ChainVerifyResponse
 from app.services.attestation import lookup_by_short_code, lookup_by_artifact_id
 from app.services.chain import verify_chain_integrity, DEFAULT_CHAIN
@@ -53,6 +54,67 @@ router = APIRouter(prefix="/v1", tags=["verify"])
 # and it should be added here when its hardening actually ships rather than in
 # advance of it.
 HARDENED_ARTIFACT_TYPES = frozenset({ArtifactType.WITNESSMARK_UNIT})
+
+# Articles whose hardening was MEASURED at the bench and recorded in the vault before
+# this check existed, so their metadata predates the fields it reads. DECLARED BY HAND,
+# one line per article, each citing the evidence — never computed, never widened to make
+# a failing unit pass. CLAUDE.md: "an expected value is DECLARED by a human before the
+# operation, never COMPUTED from the operation."
+#
+# This set exists because the alternative is worse. Metadata is inside the artifact and
+# therefore inside its hash, so backfilling a hardening field onto an already-chained
+# record would break chain_integrity — the ledger rule is that published values are never
+# rewritten to fix a defect, the defect is fenced. This is the fence.
+#
+# Keyed on device_id (the ZKU- rail identity), which is what the artifact carries.
+GRANDFATHERED_HARDENED = {
+    # OS-0004 — ob_rdp 0xBB (RDP Level 1), ob_tzen 0x1, measured at the bench and recorded
+    # in INFRA/Provisioning/ostensor-unit-build-ledger.psv. Enrolled 2026-08-03, before
+    # any hardening field was carried in the provisioning payload. Genuinely hardened, so
+    # REGISTERED is honest for it and must not regress.
+    "ZKU-7HGC-GM9E-W4V0",
+}
+
+
+def _hardening_measured(artifact, m) -> bool:
+    """True only when this article's hardening is a MEASUREMENT, not a label.
+
+    THE DEFECT THIS FIXES
+    ---------------------
+    REGISTERED used to be granted on `artifact_type in HARDENED_ARTIFACT_TYPES` alone.
+    That set contains exactly one value, WITNESSMARK_UNIT, and WITNESSMARK_UNIT *is*
+    Ostensor's frozen artifact type — so the tier turned entirely on an enum label with
+    no measurement anywhere behind it, and EVERY Ostensor enrolled landed at REGISTERED.
+
+    Measured 2026-09-05, the two articles either side of the line:
+
+        OS-0004   ob_rdp 0xBB   ob_tzen 0x1   hardened      REGISTERED is true
+        OS-0014   ob_rdp 0xAA   ob_tzen 0x0   NOT hardened  REGISTERED would be FALSE
+
+    REGISTERED's deployed meaning is that ZKNOT vouches for the DEVICE, and the product
+    ladder's wording for this rung is "measured firmware signed this". Rev-B runs a plain
+    non-secure application with no secure boot, so granting it REGISTERED would publish a
+    claim the silicon does not support, on the public unauthenticated verify surface —
+    the most permanent-in-practice place a false claim can land.
+
+    WHY THIS IS THE SAME BUG AS THE OTHER THREE FOUND THAT DAY
+    ---------------------------------------------------------
+    A check keyed on a label rather than a reading cannot disagree with its subject, so it
+    can never fail. The under-pot label tool printed a per-fleet constant; e0f3-capture
+    read presence off the algorithm tag; G6 read prose. Same shape, four surfaces.
+
+    WHAT COUNTS AS MEASURED
+    -----------------------
+    The provisioning payload must carry the option bytes read off the part: TZEN enabled
+    and RDP at Level 1. Absent or unparseable is NOT hardened — a tier is a claim, and an
+    unanswerable question resolves to the weaker claim, never the stronger one.
+    """
+    if getattr(artifact, "device_id", None) in GRANDFATHERED_HARDENED:
+        return True
+
+    tzen = str(m.get("ob_tzen", "")).strip().lower()
+    rdp = str(m.get("ob_rdp", "")).strip().lower()
+    return tzen in {"0x1", "1"} and rdp in {"0xbb", "bb"}
 
 
 def _identity_tier(artifact, *, signature_valid: bool, anchored: bool):
@@ -153,7 +215,11 @@ def _identity_tier(artifact, *, signature_valid: bool, anchored: bool):
     # it MUST ship there before this line can emit it — an unrecognised tier
     # falls to TIER_DEFAULT and renders "UNVERIFIED", which is worse than the
     # over-claim being fixed.
-    return "REGISTERED" if artifact.artifact_type in HARDENED_ARTIFACT_TYPES else "KEY-REGISTERED"
+    hardened = (
+        artifact.artifact_type in HARDENED_ARTIFACT_TYPES
+        and _hardening_measured(artifact, m)
+    )
+    return "REGISTERED" if hardened else "KEY-REGISTERED"
 
 
 def build_verify_response(artifact, chain_entry, db) -> VerifyResponse:
@@ -196,7 +262,21 @@ def build_verify_response(artifact, chain_entry, db) -> VerifyResponse:
         # caller — it is the answer, and an honest one.
         signature_valid = False
 
-    anchor_result = is_anchored(db, artifact.public_key)
+    # INCIDENT-CRED-001 R-2. A bounded key is anchored only for records at or
+    # below the position it legitimately signed, so the lookup needs THIS
+    # record's place in the chain. Read it rather than assume the default
+    # chain: production runs more than one and both start at position 0.
+    _entry = (
+        db.query(ChainEntry)
+        .filter(ChainEntry.artifact_id == artifact.artifact_id)
+        .one_or_none()
+    )
+    anchor_result = is_anchored(
+        db,
+        artifact.public_key,
+        chain_id=_entry.chain_id if _entry else None,
+        position=_entry.position if _entry else None,
+    )
 
     verified = bool(signature_valid and anchor_result.anchored and integrity_ok)
 
