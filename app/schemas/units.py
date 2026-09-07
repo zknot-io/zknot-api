@@ -21,6 +21,22 @@ UNIT_IDENTITY_RE = (
     rf"ZKU-{_CROCKFORD}{{4}}-{_CROCKFORD}{{4}}-{_CROCKFORD}{{4}}"
 )
 
+# PASSIVE articles — no MCU, no secure element, cannot sign a provisioning challenge.
+# REGISTER-IDENTITY-NAMESPACES-001 §7 rules "It does not get ZKU-" and asks for a namespace
+# decision; DECISION-PV-NAMESPACE-002 (RULED 2026-09-06) is that decision and AMENDMENT B
+# closes §7: passive articles are minted `ZKP-XXXX-XXXX-XXXX`. Identical to §2 in payload,
+# alphabet, entropy and length — only the three prefix characters differ. `P` names the
+# CLASS, not the product, so TamperVerify does not need a fourth prefix.
+#
+# WHY A SEPARATE PREFIX RATHER THAN REUSING ZKU-. §2's stated reason for the `ZKU` prefix is
+# that it distinguishes unit identities "at a glance and in a paste box". The same argument
+# applies one level down: a passive record is `registry-asserted` with both bindings `none`,
+# and a cloned board with a copied serial resolves identically. That is a materially weaker
+# claim than a device-signed unit's, and the identifier now says so before any lookup.
+PASSIVE_IDENTITY_RE = (
+    rf"ZKP-{_CROCKFORD}{{4}}-{_CROCKFORD}{{4}}-{_CROCKFORD}{{4}}"
+)
+
 
 def _canonicalize_serial(v):
     """Trim and upper-case a unit identity. NOTHING ELSE.
@@ -214,16 +230,37 @@ class PufVerifyResponse(BaseModel):
 class PassiveUnitRegisterRequest(BaseModel):
     """Body for `POST /v1/units/register-passive`.
 
-    ZKU- ONLY, deliberately narrower than `ProvisionRequest`. That schema also admits
-    `PV\\d+-\\d{5}` and `WM-\\d{4,5}`, which are legacy forms
+    ZKU- and ZKP- ONLY, deliberately narrower than `ProvisionRequest`. That schema also
+    admits `PV\\d+-\\d{5}` and `WM-\\d{4,5}`, which are legacy forms
     `REGISTER-IDENTITY-NAMESPACES-001` §6 retired; a new registry-asserted record must not
     be mintable under a retired namespace, since the whole point of §6's one-time window is
     that the old formats become unmintable.
+
+    ZKP- ADDED 2026-09-06 — DECISION-PV-NAMESPACE-002, RULED, and AMENDMENT B to §7.
+    This is the passive namespace and THIS ENDPOINT IS THE ONLY PLACE IT IS ACCEPTED.
+
+    IT IS DELIBERATELY NOT ADDED TO `ProvisionRequest`. That schema is the device-signed
+    path: the unit's secure element signs the canonical provision challenge. A passive
+    article has no secure element and cannot sign anything — §7's statement of fact, which
+    AMENDMENT B does not disturb. Accepting ZKP- there would advertise a capability the
+    article does not have, and would let a passive identity enter a flow whose whole
+    premise is a signature. The narrow surface is the point.
+
+    ZKU- IS RETAINED HERE, NOT SUBSTITUTED. Ten ZKU- passive records are live on the
+    production rail and AMENDMENT B keeps them exactly as they are, permanently, as
+    test-era records. AMENDMENT B also rules that no FURTHER ZKU- may be minted for a
+    passive article — enforcing that by removing ZKU- from this pattern is a separate,
+    deliberate act, and this change does not take it. That mirrors IF-4's own reasoning
+    about PV1-/WM- above: "removing them from the write path is a separate, deliberate
+    act". Narrowing here would also refuse a re-registration of any of the ten.
     """
 
     serial_number: UnitSerial = Field(
-        ..., pattern=rf"^{UNIT_IDENTITY_RE}$",
-        description="ZKU-XXXX-XXXX-XXXX, Crockford base32 (no I/L/O/U). Case-normalised.",
+        ..., pattern=rf"^({UNIT_IDENTITY_RE}|{PASSIVE_IDENTITY_RE})$",
+        description=(
+            "ZKP-XXXX-XXXX-XXXX (passive articles) or ZKU-XXXX-XXXX-XXXX, Crockford "
+            "base32 (no I/L/O/U). Case-normalised."
+        ),
     )
     batch: Optional[str] = Field(
         None, max_length=64,

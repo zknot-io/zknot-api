@@ -126,3 +126,109 @@ def test_verify_resolves_the_serial(client):
     body = v.json()
     assert body["verified"] is True
     assert body["chain_integrity"] is True
+
+
+# ---------------------------------------------------------------------------
+# ZKP- — the passive namespace. DECISION-PV-NAMESPACE-002 (RULED 2026-09-06),
+# AMENDMENT B to REGISTER-IDENTITY-NAMESPACES-001 §7.
+# ---------------------------------------------------------------------------
+
+ZKP_A = "ZKP-E25T-B6MW-6YGY"   # minted 2026-09-06, RESERVED in ZKP-IDENTITY-POOL-PASSIVE-001
+ZKP_B = "ZKP-54NZ-81QW-XVCY"
+
+
+def test_zkp_is_accepted_on_the_passive_path(client):
+    """§7 rules PowerVerify "does not get ZKU-" and asks for its own namespace decision.
+    DECISION-PV-NAMESPACE-002 is that decision: passive articles are ZKP-."""
+    r = client.post(
+        "/v1/units/register-passive",
+        json={"serial_number": ZKP_A, "batch": "REV2"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["device_id"] == ZKP_A
+
+
+def test_zkp_record_does_not_overstate(client):
+    """The prefix changes; the claim does not. A passive article still cannot sign, so the
+    record must stay registry-asserted with both bindings none — exactly as ZKU- passives do.
+    A new namespace must not smuggle in a stronger claim."""
+    r = client.post("/v1/units/register-passive", json={"serial_number": ZKP_B})
+    assert r.status_code == 201, r.text
+    md = r.json()["metadata"]
+    assert md["identity_tier"] == "registry-asserted", md
+    assert md["signed_by"] == "zknot-registry-v1", md
+    assert md["presence_binding"] == "none", md
+    assert md["content_binding"] == "none", md
+
+
+def test_zkp_serial_is_inside_the_signed_bytes(client):
+    """The one real difference from the seal path: the serial is in the signed payload, so
+    the signature is about an ARTICLE and not about a moment in time."""
+    s = "ZKP-545P-8QKA-DJCD"
+    r = client.post("/v1/units/register-passive", json={"serial_number": s})
+    assert r.status_code == 201, r.text
+    raw = bytes.fromhex(r.json()["metadata"]["signed_payload_hex"])
+    assert s.encode() in raw, raw
+
+
+def test_zkp_is_refused_on_the_device_signed_path():
+    """THE LOAD-BEARING NEGATIVE CONTROL.
+
+    ZKP- must NOT be accepted by `ProvisionRequest`, whose premise is that the article's
+    secure element signs the provision challenge. A passive article has no secure element
+    and cannot sign anything (§7, a statement of fact AMENDMENT B does not disturb).
+    Accepting ZKP- there would advertise a capability the article does not have.
+
+    Asserted against the SCHEMA, not the endpoint, and that is deliberate: POST
+    /v1/units/provision returns 500 "missing ZKNOT_PROVISIONING_TOKEN" before the body
+    verdict is observable in this fixture, so an endpoint test here cannot tell
+    "rejected by the pattern" from "rejected by missing config". A test that cannot
+    distinguish those is inconclusive, not passing.
+
+    Without this, widening the passive path is indistinguishable from widening both.
+    """
+    import pytest as _pytest
+    from pydantic import ValidationError
+
+    from app.schemas.units import ProvisionRequest
+
+    common = dict(artifact_type="POWERVERIFY_UNIT", batch_id="BATCH-001",
+                  manufacture_date="2026-09-06")
+
+    with _pytest.raises(ValidationError):
+        ProvisionRequest(serial_number=ZKP_A, **common)
+
+    # Positive control: the same call with a ZKU- identity MUST construct. Without it,
+    # the assertion above would pass just as readily if every field were broken.
+    ProvisionRequest(serial_number=ZKU_A, **common)
+
+
+def test_zkp_non_crockford_characters_are_refused(client):
+    """The new prefix inherits §2's alphabet unchanged — I, L, O, U are excluded."""
+    for bad in ("ZKP-IIII-1111-1111", "ZKP-LLLL-1111-1111",
+                "ZKP-OOOO-1111-1111", "ZKP-UUUU-1111-1111"):
+        r = client.post("/v1/units/register-passive", json={"serial_number": bad})
+        assert r.status_code == 422, f"{bad} was accepted: {r.text}"
+
+
+def test_zkp_malformed_shapes_are_refused(client):
+    """Wrong length, wrong grouping, and a bare prefix are all malformed."""
+    for bad in ("ZKP-E25T-B6MW", "ZKP-E25T-B6MW-6YGY-XXXX", "ZKP-", "ZKPE25TB6MW6YGY"):
+        r = client.post("/v1/units/register-passive", json={"serial_number": bad})
+        assert r.status_code == 422, f"{bad} was accepted: {r.text}"
+
+
+def test_zkp_lowercase_is_normalised(client):
+    r = client.post(
+        "/v1/units/register-passive", json={"serial_number": "zkp-qvgk-1w4r-r0bv"}
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["device_id"] == "ZKP-QVGK-1W4R-R0BV"
+
+
+def test_retired_namespaces_still_refused_after_widening(client):
+    """Widening for ZKP- must not have loosened anything else. Re-asserted deliberately:
+    a pattern edit is exactly where a retired format sneaks back in."""
+    for legacy in ("PV1-00053", "WM-0001", "VT-A-000005", "ZK-K-000031"):
+        r = client.post("/v1/units/register-passive", json={"serial_number": legacy})
+        assert r.status_code == 422, f"{legacy} was accepted: {r.text}"
