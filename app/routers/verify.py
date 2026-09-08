@@ -50,9 +50,31 @@ router = APIRouter(prefix="/v1", tags=["verify"])
 # is caller-controlled.
 #
 # WITNESSMARK_UNIT only, operator-ruled 2026-08-01. VITNI_UNIT is deliberately
-# ABSENT: it is not in the production enum, nothing can be provisioned as one,
-# and it should be added here when its hardening actually ships rather than in
+# ABSENT, and it stays absent until its hardening actually ships rather than in
 # advance of it.
+#
+# CORRECTED 2026-09-08 (DECISION-VITNI-VERIFICATION-TIER-001 VT-2). This comment used to
+# assert two further things: that the type was absent from the production enum, and that
+# nothing could be provisioned as one. Both were true when written and are false now:
+#
+# The retired sentence is PARAPHRASED above, deliberately, and not quoted. VT-2's check is
+# a substring test for it over this file, so quoting it verbatim to record its removal
+# would leave the check failing forever -- the defect recorded as VT-3B, met here in the
+# act of fixing it. VT-3B's remedy (strip comment lines before testing) CANNOT be applied
+# to VT-2, because VT-2's subject IS a comment: stripping comments would leave it testing
+# nothing and passing silently, which is worse. So when a retired claim lives in prose
+# rather than in code, the record paraphrases it. Nothing is lost -- what was wrong is
+# stated in full immediately below -- and the check stays able to fail.
+#   - ArtifactType.VITNI_UNIT has been in models/artifact.py since before this correction;
+#   - minting was blocked by VT-3, not by the enum, and VT-3 was DISCHARGED 2026-09-08
+#     (ADDENDUM-DECISION-VITNI-VERIFICATION-TIER-001-A, SIGNED) once the KEY-REGISTERED
+#     rung stopped carrying SelfKnot-specific text.
+#
+# The distinction the stale sentence blurred is the one that matters here: a Vitni CAN be
+# provisioned and CAN hold a rail record. What it cannot do is reach REGISTERED, because
+# _is_hardened() below reads MEASURED option bytes and every fabbed Vitni is ob_tzen=0x0.
+# It lands at KEY-REGISTERED on the measurement, not on this frozenset's say-so. Absence
+# here is a claim ceiling, not a provisioning gate, and it must not be read as one.
 HARDENED_ARTIFACT_TYPES = frozenset({ArtifactType.WITNESSMARK_UNIT})
 
 # Articles whose hardening was MEASURED at the bench and recorded in the vault before
