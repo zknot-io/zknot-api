@@ -216,6 +216,14 @@ def _identity_tier(artifact, *, signature_valid: bool, anchored: bool):
     if stored:
         return stored
 
+    # DECISION-DEVICE-ISSUANCE-001. A device document inherits the signing KEY's
+    # standing, and no more. It is capped at KEY-REGISTERED: the issuance path admits
+    # SelfKnot only, which is open firmware, and the record carries no measurement of
+    # the article. Promotion would need its own ruling, and the cap under-claims loudly
+    # rather than over-claiming quietly.
+    if artifact.artifact_type == ArtifactType.DEVICE_DOCUMENT:
+        return "KEY-REGISTERED" if (signature_valid and anchored) else "SELF-ASSERTED"
+
     if m.get("provision_method") != "device-signed":
         return None
 

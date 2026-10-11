@@ -4,7 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import init_db, get_db
-from app.routers import verify, attest, units, trustseal, tree
+from app.routers import verify, attest, units, trustseal, tree, issuance
 import logging
 import os
 
@@ -53,6 +53,7 @@ app.include_router(attest.router)
 app.include_router(units.router)
 app.include_router(trustseal.router)
 app.include_router(tree.router)
+app.include_router(issuance.router)
 
 
 @app.on_event("startup")

@@ -15,6 +15,7 @@ class ArtifactType(str, enum.Enum):
     VITNI_UNIT = "VITNI_UNIT"  # Device-signed Vitni birth record (ECDSA via ATECC608B, D1-gated)
     SELFKNOT_UNIT = "SELFKNOT_UNIT"  # Device-signed SelfKnot birth record (ECDSA via ATECC608B, open firmware)
     TREE_OBSERVATION = "TREE_OBSERVATION"  # One visit to one tree (TreeKnot). NOT a unit record — see below.
+    DEVICE_DOCUMENT = "DEVICE_DOCUMENT"  # A registered device signed a document's fingerprint on a button press, via a server-issued challenge. NOT a unit record. DECISION-DEVICE-ISSUANCE-001 D-7.
     # VITNI_UNIT is its own type on purpose. Idempotency for unit artifacts is keyed on
     # (serial_number, artifact_type), which is what keeps WM and PV serials in separate
     # namespaces so they can never collide. Filing a Vitni under POWERVERIFY_UNIT or

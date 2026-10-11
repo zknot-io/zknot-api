@@ -137,6 +137,62 @@ def canonical_record_payload(
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+# ---------------------------------------------------------------------------
+# v4 — the device-document record (DECISION-DEVICE-ISSUANCE-001 D-6).
+#
+# v3 plus a server-issued `nonce` and a signed `purpose`. Differences from v3 that
+# matter, each deliberate:
+#
+#   * `signed_at` is a STRING the server minted and stored at challenge time. It is
+#     never re-rendered from a datetime, so this payload is rebuilt from stored
+#     bytes, not from a rendering (CLAUDE.md: stored, never rendered).
+#   * `purpose` ("document" | "test") is INSIDE the signed bytes (D-13), so a test
+#     record says so in what the device signed. Stripping it breaks the signature.
+#   * Every field must be ASCII. Python's json.dumps and JS JSON.stringify escape
+#     non-ASCII differently, and the browser must reproduce these bytes exactly.
+#     The schema already constrains every field to hex, UUID, ZKU- Crockford, an
+#     enum or a fixed timestamp form; this is the backstop.
+#
+# `binding_version` sits inside the payload, so a v4 signature cannot pass as v3 and
+# a v3 signature cannot pass as v4.
+# ---------------------------------------------------------------------------
+BINDING_VERSION_V4 = "v4"
+DEVICE_DOCUMENT_PURPOSES = ("document", "test")
+
+
+def device_document_payload(
+    *,
+    artifact_id: str,
+    artifact_type: str,
+    device_id: str,
+    signed_at: str,
+    content_hash: str,
+    nonce: str,
+    purpose: str,
+) -> bytes:
+    """The bytes a v4 signature commits to. Raises ValueError on a non-ASCII field."""
+    payload = {
+        "binding_version": BINDING_VERSION_V4,
+        "artifact_id": artifact_id,
+        "artifact_type": artifact_type,
+        "device_id": device_id,
+        "session_id": "",
+        "signed_at": signed_at,
+        "content_hash": content_hash,
+        "nonce": nonce,
+        "purpose": purpose,
+    }
+    for k, v in payload.items():
+        if not isinstance(v, str) or not v.isascii():
+            raise ValueError(f"v4 field {k} must be an ASCII string")
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
+
+
+def device_document_challenge_hash(**kwargs) -> str:
+    """SHA-256 hex of the v4 record — the 32 bytes the device signs."""
+    return sha256_hex(device_document_payload(**kwargs).decode("ascii"))
+
+
 def record_challenge_hash(**kwargs) -> str:
     """SHA-256 hex of the canonical record — the value `challenge_hash` must equal."""
     return sha256_hex(canonical_record_payload(**kwargs).decode("utf-8"))
@@ -174,6 +230,27 @@ def derive_identity_binding(artifact) -> str:
                 return IDENTITY_BINDING_CANONICAL_RECORD
         except (AttributeError, TypeError, ValueError):
             pass
+
+    # --- v4 device document ---------------------------------------------------
+    # Every input comes from raw_artifact, which the issuance service writes from
+    # the validated submission and the STORED challenge row. signed_at in
+    # particular is the stored string, never artifact.signed_at re-rendered.
+    if raw.get("binding_version") == BINDING_VERSION_V4:
+        try:
+            expected = device_document_challenge_hash(
+                artifact_id=artifact.artifact_id,
+                artifact_type=_as_type_str(artifact.artifact_type),
+                device_id=artifact.device_id,
+                signed_at=raw["signed_at"],
+                content_hash=raw["content_hash"],
+                nonce=raw["nonce"],
+                purpose=raw["purpose"],
+            )
+            if expected == artifact.challenge_hash:
+                return IDENTITY_BINDING_CANONICAL_RECORD
+        except (AttributeError, KeyError, TypeError, ValueError):
+            pass
+        return IDENTITY_BINDING_NONE
 
     # --- provision challenge -------------------------------------------------
     # Imported inside the function on purpose: services.units imports

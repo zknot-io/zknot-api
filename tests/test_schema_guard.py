@@ -19,8 +19,14 @@ from app.schema_guard import (
 )
 
 
-def _engine_with_artifacts(*, canonical: bool, alembic_revision=None):
-    """A throwaway SQLite DB shaped like production, with or without the column."""
+def _engine_with_artifacts(*, canonical: bool, alembic_revision=None, issuance=None):
+    """A throwaway SQLite DB shaped like production, with or without the column.
+
+    `issuance` (0012's table) follows `canonical` unless given, so the older tests keep
+    meaning what they meant: "a current database" now includes 0012's table.
+    """
+    if issuance is None:
+        issuance = canonical
     engine = create_engine("sqlite://")
     md = MetaData()
     cols = [
@@ -31,6 +37,15 @@ def _engine_with_artifacts(*, canonical: bool, alembic_revision=None):
     if canonical:
         cols.append(Column("signed_at_canonical", String(64)))
     Table("artifacts", md, *cols)
+    if issuance:
+        Table(
+            "issuance_challenges", md,
+            Column("nonce", String(64), primary_key=True),
+            Column("artifact_id", String(36)),
+            Column("signed_at_canonical", String(32)),
+            Column("expires_at", String(32)),
+            Column("spent_at", String(32)),
+        )
     if alembic_revision is not None:
         Table("alembic_version", md, Column("version_num", String(64), primary_key=True))
     md.create_all(engine)
@@ -108,3 +123,33 @@ def test_missing_artifacts_table_is_refused_not_ignored():
 )
 def test_revision_ordinal(revision, expected):
     assert _revision_ordinal(revision) == expected
+
+
+# --- 0012 (DECISION-DEVICE-ISSUANCE-001) ------------------------------------------
+
+def test_refuses_a_database_at_0010_without_the_issuance_table():
+    """Code needs 0012; the database stopped at 0010, the production state on 2026-10-11."""
+    engine = _engine_with_artifacts(
+        canonical=True, issuance=False, alembic_revision="0010_trusted_key_position_bound"
+    )
+    with pytest.raises(SchemaBehindCode) as exc:
+        assert_schema_current(engine)
+    assert "issuance_challenges (table absent)" in str(exc.value)
+
+
+def test_refuses_a_premature_deploy_where_create_all_built_the_table():
+    """init_db() runs create_all() BEFORE this guard, so a premature deploy builds the
+    table itself and the column probe passes. The revision check must still refuse."""
+    engine = _engine_with_artifacts(
+        canonical=True, issuance=True, alembic_revision="0010_trusted_key_position_bound"
+    )
+    with pytest.raises(SchemaBehindCode) as exc:
+        assert_schema_current(engine)
+    assert "0012_issuance_challenges" in str(exc.value)
+
+
+def test_accepts_a_database_at_0012():
+    """Positive control for the two refusals above."""
+    engine = _engine_with_artifacts(canonical=True, alembic_revision="0012_issuance_challenges")
+    assert "0012_issuance_challenges" in assert_schema_current(engine)
+

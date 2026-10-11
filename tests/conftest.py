@@ -31,7 +31,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
-from app.models import artifact, chain, trusted_key  # noqa: F401 — register tables on Base
+from app.models import artifact, chain, issuance, trusted_key  # noqa: F401 — register tables on Base
 from app.models.artifact import Artifact
 from app.main import app
 from app.services.registry_signer import reset_key_cache

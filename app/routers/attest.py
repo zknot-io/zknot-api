@@ -104,6 +104,21 @@ def _enforce_attest_boundary(payload: ArtifactIngest, db: Session) -> None:
             ),
         )
 
+    # DECISION-DEVICE-ISSUANCE-001. A DEVICE_DOCUMENT means "a registered device
+    # signed this under a server-issued challenge, at a server-set time". Only
+    # /v1/issuance/device-sign can make that true. Admitting the type here would let
+    # an API-keyed caller file one with its own clock and its own record id, and a
+    # verifier could not tell it from the real thing, which is the defect the type
+    # exists to prevent.
+    if payload.artifact_type == ArtifactType.DEVICE_DOCUMENT:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "DEVICE_DOCUMENT records are created only by POST /v1/issuance/device-sign, "
+                "which issues the challenge and sets the time. They cannot be filed here."
+            ),
+        )
+
     offending = sorted(DERIVED_METADATA_KEYS & set(payload.metadata or {}))
     if offending:
         raise HTTPException(

@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 # The migration this code requires. RAISE THIS whenever a migration adds
 # something the application reads unconditionally.
-REQUIRED_ALEMBIC_REVISION = "0008_signed_at_canonical"
+REQUIRED_ALEMBIC_REVISION = "0012_issuance_challenges"
 
 # What the required revision actually installs. Used for two things: to name the
 # real dependency in the error, and to resolve the fresh-database case below,
@@ -46,6 +46,10 @@ REQUIRED_ALEMBIC_REVISION = "0008_signed_at_canonical"
 # built a schema that is fully current.
 REQUIRED_COLUMNS = {
     "artifacts": ("signed_at_canonical",),
+    # 0012. Note create_all() at boot builds this table on a database that lacks it,
+    # so the column probe alone passes after a premature deploy. The REVISION check
+    # below is what refuses that case, and is why the revision was raised with it.
+    "issuance_challenges": ("nonce", "artifact_id", "signed_at_canonical", "expires_at", "spent_at"),
 }
 
 _REV_PREFIX = re.compile(r"^(\d+)")
