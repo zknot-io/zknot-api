@@ -366,3 +366,79 @@ def test_v4_refuses_non_ascii():
             artifact_id="a", artifact_type="DEVICE_DOCUMENT", device_id="ZKU-É", signed_at="t",
             content_hash="c", nonce="n", purpose="test",
         )
+
+
+# ---------------------------------------------------------------- a compromised device vs. the rail
+#
+# THREAT MODEL (operator, 2026-10-16). Assume the device is fully adversarial: reflashed, its
+# button gate stripped, signing any digest on command, its holder lying about everything. The
+# question these tests answer is NOT "can one device be subverted" — a key-holding device always
+# can — but "does a subverted device get any authority beyond ITS OWN enrolled key." The rail is
+# safe iff the blast radius is that one key's records, bounded by the caps, and the chain, the
+# tiering and every other device are untouched. Each test is a thing a malicious device WOULD try.
+
+
+def test_a_leaked_key_used_beyond_its_bound_position_is_refused(client, db_session):
+    """INCIDENT-CRED-001: a key legitimately enrolled, then marked as leaked by binding it to
+    the chain position up to which it was trusted. A record it signs lands ABOVE that bound and
+    must be refused — this is the one failure that means a stolen key was replayed, distinct
+    from wholesale revocation. Control: a key bound ABOVE the new record's position still signs."""
+    from app.services.chain import DEFAULT_CHAIN, get_chain_head
+
+    good, leaked = SelfKnot(), SelfKnot()
+    enrol(db_session, good)
+    enrol(db_session, leaked, zku="ZKU-JBRE-GEJ4-HCV9")
+    head = get_chain_head(db_session, DEFAULT_CHAIN)
+    at = head.position if head else 0  # the next device document would take position at+1
+
+    tk = db_session.query(TrustedKey).filter(TrustedKey.label == "ZKU-JBRE-GEJ4-HCV9").one()
+    tk.bound_chain_id = DEFAULT_CHAIN
+    tk.bound_position = at  # trusted only up to here; the new record sits above it
+    tk.bound_reason = "INCIDENT-CRED-001 test: key reported leaked"
+    db_session.commit()
+
+    r = post(client, build(mint(client), leaked, device_id="ZKU-JBRE-GEJ4-HCV9"))
+    assert r.status_code == 403, r.text
+
+    # Control: the un-leaked key, unbounded, still files. The bound is what refused, not issuance.
+    assert post(client, build(mint(client), good)).status_code == 201
+
+
+def test_a_second_record_under_one_challenge_fails_for_a_malleable_signature_too(client, db_session):
+    """ECDSA is malleable: (r, s) and (r, n-s) both verify. A reflashed device could submit the
+    low-S record, then replay the SAME challenge with the high-S variant hoping the spend is keyed
+    on the signature bytes. It is not — single use is a property of the nonce, not the signature.
+    The second submission is a fresh, differently-signed, VALID body over a spent challenge."""
+    dev = SelfKnot()
+    enrol(db_session, dev)
+    ch = mint(client)
+    first = build(ch, dev)
+    assert post(client, first).status_code == 201
+
+    # Same challenge, same record, re-signed with the negated S — a different 128-hex signature
+    # that still verifies over the identical digest.
+    s_int = int(first["signature"][64:], 16)
+    n = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551  # P-256 group order
+    malleable = first["signature"][:64] + format(n - s_int, "064x")
+    assert malleable != first["signature"]
+    second = {**first, "signature": malleable}
+    r = post(client, second)
+    # Not 200 (that is only an EXACT retry of the stored bytes) and not a new record: 409, spent.
+    assert r.status_code == 409, r.text
+    assert db_session.query(Artifact).filter(Artifact.artifact_type == ArtifactType.DEVICE_DOCUMENT).count() == 1
+
+
+def test_per_device_daily_cap_holds_independently_of_the_hour(client, db_session, monkeypatch):
+    """The 100/day per-device cap is a separate line from 20/hour. Drive it with the hourly cap
+    lifted so the daily one is what refuses, and prove another device is unaffected."""
+    monkeypatch.setattr(device_issuance, "PER_DEVICE_PER_HOUR", 10_000)
+    monkeypatch.setattr(device_issuance, "PER_DEVICE_PER_DAY", 2)
+    monkeypatch.setenv(device_issuance.GLOBAL_DAILY_CAP_ENV, "10000")
+    dev, other = SelfKnot(), SelfKnot()
+    enrol(db_session, dev)
+    enrol(db_session, other, zku="ZKU-JBRE-GEJ4-HCV9")
+    for _ in range(2):
+        assert post(client, build(mint(client), dev)).status_code == 201
+    assert post(client, build(mint(client), dev)).status_code == 429
+    # A different device's quota is its own — one rogue device cannot exhaust another.
+    assert post(client, build(mint(client), other, device_id="ZKU-JBRE-GEJ4-HCV9")).status_code == 201
