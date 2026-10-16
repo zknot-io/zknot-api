@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.artifact import Artifact, ArtifactType
+from app.models.artifact import Artifact, ArtifactType, ELEMENT_ARTIFACT_TYPES
 from app.schemas.artifact import ArtifactIngest, ArtifactResponse
 from app.services.api_keys import require_api_key
 from app.services.attestation import ingest_artifact
@@ -116,6 +116,18 @@ def _enforce_attest_boundary(payload: ArtifactIngest, db: Session) -> None:
             detail=(
                 "DEVICE_DOCUMENT records are created only by POST /v1/issuance/device-sign, "
                 "which issues the challenge and sets the time. They cannot be filed here."
+            ),
+        )
+
+    # DECISION-ELEMENT-REGISTRATION-001. An element record means "ZKNOT verified this
+    # chip signed a server challenge" (and, for OPTIGA, "and checked its Infineon
+    # certificate"). Only /v1/elements/register does either.
+    if payload.artifact_type in ELEMENT_ARTIFACT_TYPES:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"{payload.artifact_type.value} records are created only by "
+                "POST /v1/elements/register. They cannot be filed here."
             ),
         )
 

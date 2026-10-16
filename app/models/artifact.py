@@ -16,6 +16,8 @@ class ArtifactType(str, enum.Enum):
     SELFKNOT_UNIT = "SELFKNOT_UNIT"  # Device-signed SelfKnot birth record (ECDSA via ATECC608B, open firmware)
     TREE_OBSERVATION = "TREE_OBSERVATION"  # One visit to one tree (TreeKnot). NOT a unit record — see below.
     DEVICE_DOCUMENT = "DEVICE_DOCUMENT"  # A registered device signed a document's fingerprint on a button press, via a server-issued challenge. NOT a unit record. DECISION-DEVICE-ISSUANCE-001 D-7.
+    OPTIGA_ELEMENT = "OPTIGA_ELEMENT"  # A loose OPTIGA Trust M sold on its own, registered by its Infineon factory key. NOT a unit record. DECISION-ELEMENT-REGISTRATION-001 E-1.
+    ATECC_ELEMENT = "ATECC_ELEMENT"  # A loose ATECC608B sold on its own, registered by the key ZKNOT generated in it. NOT a unit record. DECISION-ELEMENT-REGISTRATION-001 E-1.
     # VITNI_UNIT is its own type on purpose. Idempotency for unit artifacts is keyed on
     # (serial_number, artifact_type), which is what keeps WM and PV serials in separate
     # namespaces so they can never collide. Filing a Vitni under POWERVERIFY_UNIT or
@@ -58,6 +60,19 @@ UNIT_ARTIFACT_TYPES = (
     ArtifactType.POWERVERIFY_UNIT,
     ArtifactType.WITNESSMARK_UNIT,
     ArtifactType.VITNI_UNIT,
+)
+
+
+# Loose secure elements (DECISION-ELEMENT-REGISTRATION-001). One record per chip, held by
+# migration 0014's own unique indexes on device_id and public_key, NOT by 0006's unit
+# index: a chip is not a unit, and its record must never satisfy a unit-type lookup.
+#
+# Two types rather than one SECURE_ELEMENT with a family field (E-1, operator-ruled
+# 2026-10-16): "Infineon-certified" is a claim, and a claim must come from the type's own
+# verified code path, never from a field a caller wrote.
+ELEMENT_ARTIFACT_TYPES = (
+    ArtifactType.OPTIGA_ELEMENT,
+    ArtifactType.ATECC_ELEMENT,
 )
 
 

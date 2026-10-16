@@ -145,11 +145,22 @@ def test_refuses_a_premature_deploy_where_create_all_built_the_table():
     )
     with pytest.raises(SchemaBehindCode) as exc:
         assert_schema_current(engine)
-    assert "0012_issuance_challenges" in str(exc.value)
+    assert REQUIRED_ALEMBIC_REVISION in str(exc.value)
 
 
-def test_accepts_a_database_at_0012():
-    """Positive control for the two refusals above."""
+# --- 0013 / 0014 (DECISION-ELEMENT-REGISTRATION-001) -------------------------------
+
+def test_refuses_a_database_at_0012_without_the_element_types():
+    """Production on 2026-10-16. 0013/0014 add enum values and indexes, which the column
+    probe cannot see, so the revision is the only thing that can refuse this."""
     engine = _engine_with_artifacts(canonical=True, alembic_revision="0012_issuance_challenges")
-    assert "0012_issuance_challenges" in assert_schema_current(engine)
+    with pytest.raises(SchemaBehindCode) as exc:
+        assert_schema_current(engine)
+    assert "0014_element_key_uniqueness" in str(exc.value)
+
+
+def test_accepts_a_database_at_0014():
+    """Positive control for the refusals above."""
+    engine = _engine_with_artifacts(canonical=True, alembic_revision="0014_element_key_uniqueness")
+    assert "0014_element_key_uniqueness" in assert_schema_current(engine)
 

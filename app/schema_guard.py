@@ -38,7 +38,10 @@ logger = logging.getLogger(__name__)
 
 # The migration this code requires. RAISE THIS whenever a migration adds
 # something the application reads unconditionally.
-REQUIRED_ALEMBIC_REVISION = "0012_issuance_challenges"
+REQUIRED_ALEMBIC_REVISION = "0014_element_key_uniqueness"
+# 0013/0014 (DECISION-ELEMENT-REGISTRATION-001) add two enum values and two partial
+# unique indexes. Neither is a column the probe below can see, so the revision check is
+# the only thing that refuses this build on a database without them.
 
 # What the required revision actually installs. Used for two things: to name the
 # real dependency in the error, and to resolve the fresh-database case below,

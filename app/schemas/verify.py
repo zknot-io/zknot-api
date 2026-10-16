@@ -72,6 +72,11 @@ class VerifyResponse(BaseModel):
     # NOT wired into `verified` or `identity_tier`: what a weak binding should do
     # to a published claim is a claims-authority decision, not this layer's.
     identity_binding_type: Optional[str] = None
+    # DECISION-ELEMENT-REGISTRATION-001. OPTIGA_ELEMENT records only: the stored 0xE0E0
+    # certificate chains to the pinned Infineon CA 306 at signed_at and carries the
+    # signing key, re-checked on every request. null for every other type (no
+    # certificate to judge), which is not the same statement as false.
+    manufacturer_certificate_valid: Optional[bool] = None
 
 
 class ChainVerifyResponse(BaseModel):

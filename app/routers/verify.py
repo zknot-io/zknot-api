@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.artifact import ArtifactType
+from app.models.artifact import ArtifactType, ELEMENT_ARTIFACT_TYPES
 from app.models.chain import ChainEntry
 from app.schemas.verify import VerifyResponse, ChainVerifyResponse
 from app.services.attestation import lookup_by_short_code, lookup_by_artifact_id
@@ -31,7 +31,8 @@ from app.services.crypto import (
     verify_signature,
 )
 from app.services.record_binding import derive_identity_binding
-from app.services.trust_anchor import is_anchored
+from app.services.optiga_certificate import OptigaCertificateRefused, verify_optiga_certificate
+from app.services.trust_anchor import is_anchored, normalize_public_key
 
 router = APIRouter(prefix="/v1", tags=["verify"])
 
@@ -224,6 +225,14 @@ def _identity_tier(artifact, *, signature_valid: bool, anchored: bool):
     if artifact.artifact_type == ArtifactType.DEVICE_DOCUMENT:
         return "KEY-REGISTERED" if (signature_valid and anchored) else "SELF-ASSERTED"
 
+    # DECISION-ELEMENT-REGISTRATION-001. A loose element's key is on file and was made
+    # inside the chip, which is KEY-REGISTERED's wording exactly; ZKNOT says nothing about
+    # the device the buyer puts it in, which is that rung's does_not_prove. Never
+    # REGISTERED: there is no device to have measured. The Infineon certificate is a
+    # separate fact, published as manufacturer_certificate_valid, not folded into the tier.
+    if artifact.artifact_type in ELEMENT_ARTIFACT_TYPES:
+        return "KEY-REGISTERED" if (signature_valid and anchored) else "SELF-ASSERTED"
+
     if m.get("provision_method") != "device-signed":
         return None
 
@@ -250,6 +259,28 @@ def _identity_tier(artifact, *, signature_valid: bool, anchored: bool):
         and _hardening_measured(artifact, m)
     )
     return "REGISTERED" if hardened else "KEY-REGISTERED"
+
+
+def _manufacturer_certificate_valid(artifact):
+    """OPTIGA_ELEMENT only: re-check, on this request, the stored Infineon certificate.
+
+    True only if it still chains to the pinned CA at the record's signed_at AND carries
+    the key the record's signature verifies under. None for every other type, which is a
+    different statement from False: there is no certificate to judge.
+
+    Re-verified rather than read from a stored flag for the same reason `verified` is:
+    a record's provenance is a claim about the data as it sits in the database now.
+    """
+    if artifact.artifact_type != ArtifactType.OPTIGA_ELEMENT:
+        return None
+    m = artifact.metadata_ or {}
+    try:
+        cert = verify_optiga_certificate(
+            bytes.fromhex(m.get("certificate_der_hex") or ""), at=artifact.signed_at
+        )
+        return normalize_public_key(cert.public_key_hex) == normalize_public_key(artifact.public_key)
+    except (OptigaCertificateRefused, ValueError, TypeError):
+        return False
 
 
 def build_verify_response(artifact, chain_entry, db) -> VerifyResponse:
@@ -325,6 +356,7 @@ def build_verify_response(artifact, chain_entry, db) -> VerifyResponse:
         # service can know them; this one is a cryptographic fact about the
         # stored row, so it is checked, not reported.
         identity_binding_type=derive_identity_binding(artifact),
+        manufacturer_certificate_valid=_manufacturer_certificate_valid(artifact),
         verified=verified,
         signature_valid=signature_valid,
         key_anchored=anchor_result.anchored,

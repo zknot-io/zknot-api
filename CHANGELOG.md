@@ -8,6 +8,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Loose secure-element registration** (DECISION-ELEMENT-REGISTRATION-001, ruled
+  2026-10-16). `POST /v1/elements/challenge` and `POST /v1/elements/register`, both
+  Bearer `ZKNOT_PROVISIONING_TOKEN`. Types `OPTIGA_ELEMENT` and `ATECC_ELEMENT`; serial
+  `ZKE-XXXX-XXXX-XXXX` derived server-side from the challenge nonce, never accepted from
+  a caller. The chip signs a v4 record (purpose `element-registration`) whose
+  `content_hash` is its own evidence: the 0xE0E0 certificate for OPTIGA, the SEC1 key for
+  ATECC. OPTIGA certificates must chain to the pinned Infineon Trust M CA 306 / ECC Root
+  CA 2 (`app/pki/`, declared fingerprints; no CRL check). The chip key is anchored with an
+  R-2 position bound at its own record, so a sold chip cannot sign later anchored records.
+  `/v1/verify` gains `manufacturer_certificate_valid` (OPTIGA only, re-checked per
+  request); element records derive `KEY-REGISTERED`. `/v1/attest` refuses both types.
+  - **Migrations 0013 (enum) and 0014 (unique on device_id and public_key over the two
+    types) must run BEFORE this deploys.** The schema guard now requires 0014.
 - **Device-signed WitnessMark provisioning.** `POST /v1/units/provision` now
   accepts a device-signed birth record. When `public_key` + `signature` are
   present, the unit's own secure element (OPTIGA on WitnessMark) has signed the
